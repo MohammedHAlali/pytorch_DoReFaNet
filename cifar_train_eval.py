@@ -58,9 +58,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = cfg.use_gpu
 def main():
   if cfg.cifar == 10:
     print('training CIFAR-10 !')
+    num_classes = 10
     dataset = torchvision.datasets.CIFAR10
   elif cfg.cifar == 100:
     print('training CIFAR-100 !')
+    num_classes = 100
     dataset = torchvision.datasets.CIFAR100
   else:
     assert False, 'dataset unknown !'
@@ -77,7 +79,7 @@ def main():
                                             num_workers=cfg.num_workers)
 
   print('==> Building ResNet..')
-  model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits).cuda()
+  model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=num_classes).cuda()
 
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, [100, 150, 180], gamma=0.1)
