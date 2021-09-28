@@ -37,7 +37,7 @@ parser.add_argument('--train_batch_size', type=int, default=128)
 parser.add_argument('--eval_batch_size', type=int, default=100)
 parser.add_argument('--max_epochs', type=int, default=200)
 
-parser.add_argument('--log_interval', type=int, default=10)
+parser.add_argument('--log_interval', type=int, default=100)
 parser.add_argument('--use_gpu', type=str, default='0')
 parser.add_argument('--num_workers', type=int, default=5)
 
@@ -79,8 +79,9 @@ def main():
                                             num_workers=cfg.num_workers)
 
   print('==> Building ResNet..')
+  print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
   model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=num_classes).cuda()
-
+  print(model)
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, [100, 150, 180], gamma=0.1)
   criterion = torch.nn.CrossEntropyLoss().cuda()
@@ -131,11 +132,14 @@ def main():
           'Precision@1: %.2f%% \n' % (datetime.now(), acc))
     summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
 
+  start_training = time.time()
   for epoch in range(cfg.max_epochs):
     lr_schedu.step(epoch)
     train(epoch)
-    test(epoch)
-    torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
+  end_training = time.time()
+  print('training time: ', end_training - start_training, ' seconds')
+  test(epoch)
+  torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
 
   summary_writer.close()
 
