@@ -66,7 +66,7 @@ class activation_quantize_fn(nn.Module):
 def conv2d_Q_fn(w_bit):
   class Conv2d_Q(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True):
+                 padding=0, dilation=1, groups=1, bias=False):
       super(Conv2d_Q, self).__init__(in_channels, out_channels, kernel_size, stride,
                                      padding, dilation, groups, bias)
       self.w_bit = w_bit
