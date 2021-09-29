@@ -20,7 +20,7 @@ from utils.preprocessing import *
 parser = argparse.ArgumentParser(description='DoReFa-Net pytorch implementation')
 
 parser.add_argument('--root_dir', type=str, default='./')
-parser.add_argument('--data_dir', type=str, default='./data')
+parser.add_argument('--data_dir', type=str, default='../data')
 parser.add_argument('--log_name', type=str, default='resnet_w1a32')
 parser.add_argument('--pretrain', action='store_true', default=False)
 parser.add_argument('--pretrain_dir', type=str, default='./ckpt/resnet20_baseline')
@@ -38,8 +38,8 @@ parser.add_argument('--eval_batch_size', type=int, default=100)
 parser.add_argument('--max_epochs', type=int, default=200)
 
 parser.add_argument('--log_interval', type=int, default=100)
-parser.add_argument('--use_gpu', type=str, default='0')
-parser.add_argument('--num_workers', type=int, default=5)
+parser.add_argument('--use_gpu', type=str, default='1')
+parser.add_argument('--num_workers', type=int, default=1)
 
 parser.add_argument('--cluster', action='store_true', default=False)
 
@@ -128,7 +128,7 @@ def main():
       correct += predicted.eq(targets.data).cpu().sum().item()
 
     acc = 100. * correct / len(eval_dataset)
-    print('%s------------------------------------------------------ '
+    print('%s------------------------------------------------------ \n'
           'Precision@1: %.2f%% \n' % (datetime.now(), acc))
     summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
 
