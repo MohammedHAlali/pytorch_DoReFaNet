@@ -5,13 +5,14 @@ from datetime import datetime
 
 import torch
 import torch.optim as optim
+import torch.utils as utils
 import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
 import torchvision
 
 from tensorboardX import SummaryWriter
-
+import matplotlib.pyplot as plt
 from nets.cifar_resnet import *
 
 from utils.preprocessing import *
@@ -33,11 +34,11 @@ parser.add_argument('--Abits', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.1)
 parser.add_argument('--wd', type=float, default=1e-4)
 
-parser.add_argument('--train_batch_size', type=int, default=128)
-parser.add_argument('--eval_batch_size', type=int, default=100)
-parser.add_argument('--max_epochs', type=int, default=200)
+parser.add_argument('--train_batch_size', type=int, default=64)
+parser.add_argument('--eval_batch_size', type=int, default=1)
+parser.add_argument('--max_epochs', type=int, default=5)
 
-parser.add_argument('--log_interval', type=int, default=100)
+parser.add_argument('--log_interval', type=int, default=200)
 parser.add_argument('--use_gpu', type=str, default='0')
 parser.add_argument('--num_workers', type=int, default=1)
 
@@ -50,11 +51,11 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"] = cfg.use_gpu
 
 out_path = os.path.join('out', str(cfg.exp_id))
-if(os.path.exists(out_path)):
+while(os.path.exists(out_path)):
     print(out_path, ' exists')
     cfg.exp_id += 1
     out_path = os.path.join('out', str(cfg.exp_id))
-    print('new out_path: ', out_path)
+print('new out_path: ', out_path)
 if(not os.path.exists(out_path)):
     print(out_path, ' not exists')
     os.mkdir(out_path)
@@ -81,36 +82,44 @@ def main():
   print('==> Preparing data ..')
   train_dataset = dataset(root=cfg.data_dir, train=True, download=True,
                           transform=cifar_transform(is_training=True))
+  print('train dataset: ', train_dataset)
+  print('dataset length: ', len(train_dataset))
+  train_dataset, valid_dataset = utils.data.random_split(train_dataset, [len(train_dataset)-5000, 5000])
+  print('train dataset: ', train_dataset)
+  print('valid dataset: ', valid_dataset, ' length: ', len(valid_dataset))
   train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.train_batch_size, shuffle=True,
                                              num_workers=cfg.num_workers)
-
-  eval_dataset = dataset(root=cfg.data_dir, train=False, download=True,
+  valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=cfg.train_batch_size, shuffle=True,
+                                                       num_workers=cfg.num_workers)
+  print('valid data_loader: ', valid_loader)
+  test_dataset = dataset(root=cfg.data_dir, train=False, download=True,
                          transform=cifar_transform(is_training=False))
-  eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=cfg.eval_batch_size, shuffle=False,
+  test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=cfg.eval_batch_size, shuffle=False,
                                             num_workers=cfg.num_workers)
-
+  print('test dataset: ', test_dataset)
   print('==> Building ResNet..')
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
   model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=num_classes).cuda()
   print(model)
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
-  lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, [100, 150, 180], gamma=0.1)
+  lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[cfg.max_epochs//2], gamma=0.1, verbose=True)
   criterion = torch.nn.CrossEntropyLoss().cuda()
   summary_writer = SummaryWriter(cfg.log_dir)
+  print('lr scheduler: ', lr_schedu)
 
   if cfg.pretrain:
     model.load_state_dict(torch.load(cfg.pretrain_dir))
 
   # Training
   def train(epoch):
-    print('\nEpoch: %d' % epoch)
     model.train()
-
+    train_loss_list = []
     start_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-      outputs = model(inputs.cuda())
+      #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+      outputs = model(inputs.cuda()) #forward pass
       loss = criterion(outputs, targets.cuda())
-
+      train_loss_list.append(loss.item())
       optimizer.zero_grad()
       loss.backward()
       optimizer.step()
@@ -126,31 +135,79 @@ def main():
         start_time = time.time()
         summary_writer.add_scalar('cls_loss', loss.item(), step)
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
+    train_epoch_loss = np.mean(train_loss_list)
+    print('train epoch loss: ', train_epoch_loss)
+    return train_epoch_loss
 
-  def test(epoch):
+  
+  def valid(epoch):
+      #pass
+      model.eval() #https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
+      with torch.no_grad():
+        valid_loss_list = []
+        for batch_idx, (inputs, targets) in enumerate(valid_loader):
+            #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+            outputs = model(inputs.cuda()) #forward pass
+            loss = criterion(outputs, targets.cuda())
+            valid_loss_list.append(loss.item())
+        valid_epoch_loss = np.mean(valid_loss_list)
+        print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
+      return valid_epoch_loss
+
+  def test():
     # pass
     model.eval()
     correct = 0
-    for batch_idx, (inputs, targets) in enumerate(eval_loader):
-      inputs, targets = inputs.cuda(), targets.cuda()
+    y_pred = []
+    y_true = []
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            inputs, targets = inputs.cuda(), targets.cuda()
+            #print('test inputs shape:', inputs.shape)
+            outputs = model(inputs)
+            #print('output shape: ', outputs.shape)
+            _, predicted = torch.max(outputs.data, 1)
+            #print('predicted (y_pred[i]): ', predicted.item())
+            y_pred.append(predicted.item())
+            y_true.append(targets)
+            #print('y_pred: ', y_pred)
+            correct += predicted.eq(targets.data).cpu().sum().item()
 
-      outputs = model(inputs)
-      _, predicted = torch.max(outputs.data, 1)
-      correct += predicted.eq(targets.data).cpu().sum().item()
-
-    acc = 100. * correct / len(eval_dataset)
-    print('%s------------------------------------------------------ \n'
-          'Precision@1: %.2f%% \n' % (datetime.now(), acc))
-    summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
+        acc = 100. * correct / len(test_dataset)
+        print('%s------------------------------------------------------ \n'
+          'Test Precision@1: %.2f%% \n' % (datetime.now(), acc))
+        summary_writer.add_scalar('Precision@1', acc)
+    y_pred = np.array(y_pred)
+    y_true = np.array(y_true)
+    print('y pred shape: ', y_pred.shape)
+    print('y true shape: ', y_true.shape)
+    return y_pred, y_true
 
   start_training = time.time()
+  train_losses = []
+  valid_losses = []
   for epoch in range(cfg.max_epochs):
+    print('\nEpoch: %d =============' % epoch)
+    train_loss = train(epoch)
+    valid_loss = valid(epoch) #get loss value
     lr_schedu.step(epoch)
-    train(epoch)
+    train_losses.append(train_loss)
+    valid_losses.append(valid_loss)
+  print('train losses: ', train_losses)
+  print('valid losses: ', valid_losses)
+  plt.figure()
+  plt.plot(np.log(train_losses), 'g--', label='training loss')
+  plt.plot(np.log(valid_losses), '-', label='validation loss')
+  plt.title('Training and Validation Loss, exp{}'.format(cfg.exp_id))
+  plt.ylabel('Loss')
+  plt.xlabel('Epoch')
+  plt.legend(loc='upper right')
+  plt.savefig('{}/exp_{}_train_valid_loss.png'.format(out_path, cfg.exp_id), dpi=300)
+  plt.close()
   end_training = time.time()
   print('training time: ', end_training - start_training, ' seconds')
-  test(epoch)
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
+  y_pred, y_true = test()
 
   summary_writer.close()
 
