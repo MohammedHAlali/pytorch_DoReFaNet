@@ -36,7 +36,7 @@ parser.add_argument('--wd', type=float, default=1e-4)
 
 parser.add_argument('--train_batch_size', type=int, default=64)
 parser.add_argument('--eval_batch_size', type=int, default=1)
-parser.add_argument('--max_epochs', type=int, default=5)
+parser.add_argument('--max_epochs', type=int, default=10)
 
 parser.add_argument('--log_interval', type=int, default=200)
 parser.add_argument('--use_gpu', type=str, default='0')
@@ -106,7 +106,7 @@ def main():
   criterion = torch.nn.CrossEntropyLoss().cuda()
   summary_writer = SummaryWriter(cfg.log_dir)
   print('lr scheduler: ', lr_schedu)
-
+  print('optimizer: ', optimizer.state_dict())
   if cfg.pretrain:
     model.load_state_dict(torch.load(cfg.pretrain_dir))
 
@@ -117,12 +117,12 @@ def main():
     start_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
       #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
-      outputs = model(inputs.cuda()) #forward pass
+      outputs = model(inputs.cuda()) #forward pass, outputs = yhat
       loss = criterion(outputs, targets.cuda())
       train_loss_list.append(loss.item())
       optimizer.zero_grad()
-      loss.backward()
-      optimizer.step()
+      loss.backward() #calculate gradients
+      optimizer.step() #update parameters with gradient's value
 
       if batch_idx % cfg.log_interval == 0:
         step = len(train_loader) * epoch + batch_idx
@@ -161,27 +161,38 @@ def main():
     y_pred = []
     y_true = []
     with torch.no_grad():
+        print('looping on test data for {} iterations'.format(len(test_loader)))
         for batch_idx, (inputs, targets) in enumerate(test_loader):
-            inputs, targets = inputs.cuda(), targets.cuda()
-            #print('test inputs shape:', inputs.shape)
+            print('inputs in pytorch shape: ', inputs.shape)
+            inputs_np = inputs.numpy()
+            print('input in numpy shape: ', inputs_np.shape)
+            print('input[0].shape: ', inputs_np[0].shape)
             outputs = model(inputs)
             #print('output shape: ', outputs.shape)
             _, predicted = torch.max(outputs.data, 1)
             #print('predicted (y_pred[i]): ', predicted.item())
             y_pred.append(predicted.item())
-            y_true.append(targets)
+            y_true.append(targets.item())
             #print('y_pred: ', y_pred)
             correct += predicted.eq(targets.data).cpu().sum().item()
+            if(batch_idx == 0):
+                print('test inputs shape:', inputs.shape, ' targets shape: ', targets.shape)
+                print('test inputs type:', type(inputs), ' targets type: ', type(targets))
+                print('output shape: ', outputs.shape, ' type: ', type(outputs))
+                print('predicted (y_pred[i]): ', predicted.item())
+                print('targets (y_true[i]): ', targets.item())
 
         acc = 100. * correct / len(test_dataset)
         print('%s------------------------------------------------------ \n'
           'Test Precision@1: %.2f%% \n' % (datetime.now(), acc))
         summary_writer.add_scalar('Precision@1', acc)
+    print('y pred list type: ', type(y_pred))
+    print('y true list type: ', type(y_true))
     y_pred = np.array(y_pred)
     y_true = np.array(y_true)
     print('y pred shape: ', y_pred.shape)
     print('y true shape: ', y_true.shape)
-    return y_pred, y_true
+    return acc, y_pred, y_true
 
   start_training = time.time()
   train_losses = []
@@ -205,10 +216,26 @@ def main():
   plt.savefig('{}/exp_{}_train_valid_loss.png'.format(out_path, cfg.exp_id), dpi=300)
   plt.close()
   end_training = time.time()
+  print('train valid loss curve figure saved')
   print('training time: ', end_training - start_training, ' seconds')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
-  y_pred, y_true = test()
-
+  test_accuracy, y_pred, y_true = test()
+  from sklearn.metrics import confusion_matrix
+  cm = confusion_matrix(y_pred=y_pred, y_true=y_true)
+  print('confusion matrix')
+  print(cm)
+  import seaborn as sns
+  sns.set(font_scale=1.0) #label size
+  ax = sns.heatmap(cm, annot=True, fmt="d",cmap='Greys')
+  title = 'Testing Accuracy=' + str(np.around(test_accuracy, decimals=2))
+  plt.title(title)
+  plt.xlabel('Predicted Classes')
+  plt.ylabel('True Classes')
+  plt.show()
+  img_name = '{}/exp_{}_cm.png'.format(out_path, cfg.exp_id)
+  plt.savefig(img_name, dpi=600)
+  print('image saved in ', img_name)
+  plt.close()
   summary_writer.close()
 
 
