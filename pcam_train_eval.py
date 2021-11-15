@@ -1,5 +1,11 @@
+'''
+This version of DoReFa-Net uses PatchCamelyon dataset for training, validation, testing
+in testing (inference) phase, convert images to grayscale
+'''
+
 import os
 import time
+import h5py
 import argparse
 from datetime import datetime
 from PIL import Image
@@ -20,15 +26,13 @@ from nets.cifar_resnet import *
 from utils.preprocessing import *
 
 # Training settings
-parser = argparse.ArgumentParser(description='DoReFa-Net pytorch implementation')
+parser = argparse.ArgumentParser(description='DoReFa-Net pytorch implementation for PatchCamelyon')
 
 parser.add_argument('--root_dir', type=str, default='out/')
 parser.add_argument('--data_dir', type=str, default='../data')
 parser.add_argument('--log_name', type=str, default='resnet_w1a32')
-parser.add_argument('--model', type=str, default='cifar10')
 parser.add_argument('--pretrain_dir', type=str, default='./ckpt/resnet20_baseline')
 
-parser.add_argument('--cifar', type=int, default=10)
 parser.add_argument('--exp_id', type=int, default=0) #logging
 parser.add_argument('--Wbits', type=int, default=1)
 parser.add_argument('--Abits', type=int, default=32)
@@ -48,6 +52,7 @@ parser.add_argument('--num_workers', type=int, default=1)
 parser.add_argument('--cluster', action='store_true', default=False)
 
 cfg = parser.parse_args()
+print('parser: ', parser)
 print('arguments: ', cfg)
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
@@ -70,7 +75,99 @@ print('log dir: ', cfg.log_dir)
 os.makedirs(cfg.log_dir, exist_ok=True)
 os.makedirs(cfg.ckpt_dir, exist_ok=True)
 
+# modified from: https://github.com/alexmagsam/metastasis-detection/blob/master/data.py
+class myDataset(torch.utils.data.Dataset):
+    def __init__(self, path, mode='train', batch_size=32): #later add augmentation
+        super().__init__()
+        self.batch_size = batch_size
+        assert mode in ['train', 'valid', 'test']
+        base_name = "camelyonpatch_level_2_split_{}_{}.h5"
+        print("# " * 50)
+        print('Loading {} dataset...'.format(mode))
+        # Open the files
+        h5X = h5py.File(os.path.join(path, base_name.format(mode, 'x')), 'r')
+        h5y = h5py.File(os.path.join(path, base_name.format(mode, 'y')), 'r')
+        print('x h5py: ', h5X)
+        # Read into numpy array
+        self.X = np.array(h5X.get('x'))
+        self.y = np.array(h5y.get('y')).reshape([-1, 1])
+        print('X data shape: ', self.X.shape)
+        print('Y data shape: ', self.y.shape)
+        x_filename = os.path.join(path, base_name.format(mode, 'x'))
+        y_filename = os.path.join(path, base_name.format(mode, 'y'))
+        np.save(file=x_filename, arr=self.X)
+        np.save(file=y_filename, arr=self.y)
+        print('np data files saved in', x_filename)
+        print('Loaded {} dataset with {} samples'.format(mode, len(self.X)))
+        print("# " * 50)
+        self.transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor()])
+    
+    def __getitem__(self, item):
+        idx = item % self.__len__()
+        _slice = slice(idx*self.batch_size, (idx + 1) * self.batch_size)
+        images = self._transform(self.X[_slice])
+        labels = torch.tensor(self.y[_slice].astype(np.float32)).view(-1, 1)
+        return {'images': images, 'labels': labels}
+
+    def _transform(self, images):
+        tensors = []
+        for image in images:
+            tensors.append(self.transform(image))
+        return torch.stack(tensors)
+
+    def __len__(self):
+        return len(self.X) // self.batch_size
+
+
+
 def main():
+  data_path = '../../camelyon/data/'
+  #print('loading data from: ', data_path)
+  #train_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('train', 'x')))
+  #train_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('train', 'y')))
+  #valid_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('valid', 'x')))
+  #valid_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('valid', 'y')))
+  #test_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('test', 'x')))
+  #test_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('test', 'y')))
+  #train_y = np.reshape(train_y, [-1, 1])
+  #valid_y = np.reshape(valid_y, [-1, 1])
+  #test_y = np.reshape(test_y, [-1, 1])
+  train_data = myDataset(data_path, mode='train')
+  valid_data = myDataset(data_path, mode='valid')
+  test_data = myDataset(data_path, mode='test')
+  print('train data shapes: ', len(train_data))
+  #print('train_data[0] shapes: ', train_x[0].shape, ' label shape=', train_y[0].shape)
+  #print('valid data shapes: ', valid_x.shape, valid_y.shape)
+  #print('test data shapes: ', test_x.shape, test_y.shape)
+  
+  '''
+  train_x_path = os.path.join(data_path, 'camelyonpatch_level_2_split_train_x.h5')
+  train_y_path = os.path.join(data_path, 'camelyonpatch_level_2_split_train_y.h5')
+  valid_x_path = os.path.join(data_path, 'camelyonpatch_level_2_split_valid_x.h5')
+  valid_y_path = os.path.join(data_path, 'camelyonpatch_level_2_split_valid_y.h5')
+  test_x_path = os.path.join(data_path, 'camelyonpatch_level_2_split_test_x.h5')
+  test_y_path = os.path.join(data_path, 'camelyonpatch_level_2_split_test_y.h5')
+  train_x = h5py.File(train_x_path, 'r')
+  train_y = h5py.File(train_y_path, 'r')
+  valid_x = h5py.File(valid_x_path, 'r')
+  valid_y = h5py.File(valid_y_path, 'r')
+  test_x = h5py.File(test_x_path, 'r')
+  test_y = h5py.File(test_y_path, 'r')
+  print('train data: ', train_x)
+  train_x = np.array(train_x.get('x'))
+  train_y = np.array(train_y.get('y'))
+  valid_x = np.array(valid_x.get('x'))
+  valid_y = np.array(valid_y.get('y'))
+  test_x = np.array(test_x.get('x'))
+  test_y = np.array(test_y.get('y'))
+  print('train data shape: ', train_x.shape, train_y.shape)
+  #print('train data[0] shape: ', train_x[0].shape, train_y[0].shape, train_y[0:10])
+  print('valid data shape: ', valid_x.shape, valid_y.shape)
+  print('test data shape: ', test_x.shape, test_y.shape)
+  train_x_torch = torch.from_numpy(train_x)
+  print('train x torch dtype: ', train_x.dtype)
+  train_dataset = torch.utils.data.TensorDataset(train_x, train_y)
+  print('train dataset: ', train_dataset)
   if cfg.model == 'mnist':
       print('training MNIST')
       num_classes = 10
@@ -88,7 +185,7 @@ def main():
     color_mode = 'rgb'
   else:
     assert False, 'dataset unknown !'
-
+  
   print('==> Preparing data ..')
   train_dataset = dataset(root=cfg.data_dir, train=True, download=True,
                           transform=cifar_transform(is_training=True))
@@ -117,9 +214,10 @@ def main():
   test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=cfg.eval_batch_size, shuffle=False,
                                             num_workers=cfg.num_workers)
   print('test dataset: ', test_dataset)
+  '''
   print('==> Building ResNet..')
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
-  model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=num_classes).cuda()
+  model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   print(model)
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[cfg.max_epochs//2], gamma=0.1, verbose=True)
@@ -133,8 +231,11 @@ def main():
     model.train()
     train_loss_list = []
     start_time = time.time()
-    for batch_idx, (inputs, targets) in enumerate(train_loader):
-      #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+    for batch_idx, sample in enumerate(train_data):
+      print('sample : ', sample)
+      inputs = None
+      targets = None
+      print('iteration={}, inputs type={}'.format(batch_idx, type(inputs)))
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
       loss = criterion(outputs, targets.cuda())
       train_loss_list.append(loss.item())
@@ -143,7 +244,7 @@ def main():
       optimizer.step() #update parameters with gradient's value
 
       if batch_idx % cfg.log_interval == 0:
-        step = len(train_loader) * epoch + batch_idx
+        step = len(train_data) * epoch + batch_idx
         duration = time.time() - start_time
 
         print('%s epoch: %d step: %d cls_loss= %.5f (%d samples/sec)' %
@@ -163,7 +264,7 @@ def main():
       model.eval() #https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
       with torch.no_grad():
         valid_loss_list = []
-        for batch_idx, (inputs, targets) in enumerate(valid_loader):
+        for batch_idx, (inputs, targets) in enumerate(valid_data):
             #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
             outputs = model(inputs.cuda()) #forward pass
             loss = criterion(outputs, targets.cuda())
@@ -176,12 +277,12 @@ def main():
       # pass
       model.eval()
       correct = 0
-      for batch_idx, (inputs, targets) in enumerate(test_loader):
+      for batch_idx, (inputs, targets) in enumerate(test_data):
           inputs, targets = inputs.cuda(), targets.cuda()
           outputs = model(inputs)
           _, predicted = torch.max(outputs.data, 1)
           correct += predicted.eq(targets.data).cpu().sum().item()
-      acc = 100. * correct / len(test_dataset)
+      acc = 100. * correct / len(test_data)
       print('%s------------------------------------------------------ '
                 'Precision@1: %.2f%% \n' % (datetime.now(), acc))
       summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
@@ -195,8 +296,8 @@ def main():
     max_list = []
     min_list = []
     with torch.no_grad():
-        print('looping on test data for {} iterations'.format(len(test_loader)))
-        for batch_idx, (inputs, targets) in enumerate(test_loader):
+        print('looping on test data for {} iterations'.format(len(test_data)))
+        for batch_idx, (inputs, targets) in enumerate(test_data):
             white_count = 0 #count of white pixel in an image
             inputs, targets = inputs.cuda(), targets.cuda()
             image0 = transforms.ToPILImage()(inputs[0]).convert('RGB')
@@ -249,7 +350,7 @@ def main():
                 print('img saved: ', orig_img_name)
                 print('img saved: ', trans_img_name)
 
-        acc = 100. * correct / len(test_dataset)
+        acc = 100. * correct / len(test_data)
         print('%s------------------------------------------------------ \n'
           'Test Precision@1: %.2f%% \n' % (datetime.now(), acc))
         summary_writer.add_scalar('Precision@1', acc)
