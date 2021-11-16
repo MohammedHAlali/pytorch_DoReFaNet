@@ -90,23 +90,25 @@ class myDataset(torch.utils.data.Dataset):
         print('x h5py: ', h5X)
         # Read into numpy array
         self.X = np.array(h5X.get('x'))
-        self.y = np.array(h5y.get('y')).reshape([-1, 1])
-        print('X data shape: ', self.X.shape)
-        print('Y data shape: ', self.y.shape)
+        self.y = np.array(h5y.get('y'))
+        print('X data shape: ', self.X.shape, ' type: ', self.X.dtype)
+        print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
+        self.y = np.squeeze(self.y)
+        print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
         x_filename = os.path.join(path, base_name.format(mode, 'x'))
         y_filename = os.path.join(path, base_name.format(mode, 'y'))
         np.save(file=x_filename, arr=self.X)
         np.save(file=y_filename, arr=self.y)
         print('np data files saved in', x_filename)
         print('Loaded {} dataset with {} samples'.format(mode, len(self.X)))
-        print("# " * 50)
+        print("# " * 100)
         self.transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor()])
     
     def __getitem__(self, item):
         idx = item % self.__len__()
         _slice = slice(idx*self.batch_size, (idx + 1) * self.batch_size)
         images = self._transform(self.X[_slice])
-        labels = torch.tensor(self.y[_slice].astype(np.float32)).view(-1, 1)
+        labels = torch.tensor(self.y[_slice].astype(np.int64))
         return {'images': images, 'labels': labels}
 
     def _transform(self, images):
@@ -232,10 +234,10 @@ def main():
     train_loss_list = []
     start_time = time.time()
     for batch_idx, sample in enumerate(train_data):
-      print('sample : ', sample)
-      inputs = None
-      targets = None
-      print('iteration={}, inputs type={}'.format(batch_idx, type(inputs)))
+      print('sample keys: ', sample.keys())
+      inputs = sample['images']
+      targets = sample['labels']
+      print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
       loss = criterion(outputs, targets.cuda())
       train_loss_list.append(loss.item())

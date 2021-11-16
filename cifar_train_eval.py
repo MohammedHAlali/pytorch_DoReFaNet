@@ -94,7 +94,7 @@ def main():
                           transform=cifar_transform(is_training=True))
   image0 = train_dataset[0][0]
   print('image0 shape: ', image0.shape)
-  image0 = transforms.ToPILImage()(image0).convert(mode=color_mode)
+  image0 = transforms.ToPILImage()(image0)
   image0 = np.array(image0)
   print('image0: type: ', type(image0))
   print('image0 shape: ', image0.shape)
@@ -134,7 +134,9 @@ def main():
     train_loss_list = []
     start_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-      #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+      print('iteration: ', batch_idx, '*'*50)
+      print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+      print('targets shape={} type={}'.format(targets.shape, type(targets)))
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
       loss = criterion(outputs, targets.cuda())
       train_loss_list.append(loss.item())
@@ -197,6 +199,7 @@ def main():
     with torch.no_grad():
         print('looping on test data for {} iterations'.format(len(test_loader)))
         for batch_idx, (inputs, targets) in enumerate(test_loader):
+            print('iteration: {}, inputs type: {}, targets type: {}'.format(batch_idx, inputs.dtype, targets.dtype))
             white_count = 0 #count of white pixel in an image
             inputs, targets = inputs.cuda(), targets.cuda()
             image0 = transforms.ToPILImage()(inputs[0]).convert('RGB')
