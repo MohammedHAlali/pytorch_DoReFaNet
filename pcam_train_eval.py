@@ -25,26 +25,28 @@ from nets.cifar_resnet import *
 
 from utils.preprocessing import *
 
+print('torch version: ', torch.__version__)
+
 # Training settings
 parser = argparse.ArgumentParser(description='DoReFa-Net pytorch implementation for PatchCamelyon')
 
 parser.add_argument('--root_dir', type=str, default='out/')
-parser.add_argument('--data_dir', type=str, default='../data')
+#parser.add_argument('--data_dir', type=str, default='../data')
 parser.add_argument('--log_name', type=str, default='resnet_w1a32')
 parser.add_argument('--pretrain_dir', type=str, default='./ckpt/resnet20_baseline')
 
 parser.add_argument('--exp_id', type=int, default=0) #logging
-parser.add_argument('--Wbits', type=int, default=1)
+parser.add_argument('--Wbits', type=int, default=32)
 parser.add_argument('--Abits', type=int, default=32)
 
-parser.add_argument('--lr', type=float, default=0.1)
-parser.add_argument('--wd', type=float, default=1e-4)
+parser.add_argument('--lr', type=float, default=0.001)
+parser.add_argument('--wd', type=float, default=1e-4) #TODO: feed as weight_decay to optimizer
 
-parser.add_argument('--train_batch_size', type=int, default=64)
+parser.add_argument('--train_batch_size', type=int, default=16)
 parser.add_argument('--eval_batch_size', type=int, default=1)
 parser.add_argument('--max_epochs', type=int, default=10)
 
-parser.add_argument('--log_interval', type=int, default=200)
+parser.add_argument('--log_interval', type=int, default=1000)
 #parser.add_argument('--use_gpu', type=str, default='') #empty means use no gpu
 parser.add_argument('--use_gpu', type=str, default='0')
 parser.add_argument('--num_workers', type=int, default=1)
@@ -77,7 +79,7 @@ os.makedirs(cfg.ckpt_dir, exist_ok=True)
 
 # modified from: https://github.com/alexmagsam/metastasis-detection/blob/master/data.py
 class myDataset(torch.utils.data.Dataset):
-    def __init__(self, path, mode='train', batch_size=32): #later add augmentation
+    def __init__(self, path, mode, batch_size): #later add augmentation
         super().__init__()
         self.batch_size = batch_size
         assert mode in ['train', 'valid', 'test']
@@ -118,7 +120,7 @@ class myDataset(torch.utils.data.Dataset):
         return torch.stack(tensors)
 
     def __len__(self):
-        return len(self.X) // self.batch_size
+        return (len(self.X) // self.batch_size)
 
 
 
@@ -134,11 +136,11 @@ def main():
   #train_y = np.reshape(train_y, [-1, 1])
   #valid_y = np.reshape(valid_y, [-1, 1])
   #test_y = np.reshape(test_y, [-1, 1])
-  train_data = myDataset(data_path, mode='train')
-  valid_data = myDataset(data_path, mode='valid')
-  test_data = myDataset(data_path, mode='test')
-  print('train data shapes: ', len(train_data))
-  #print('train_data[0] shapes: ', train_x[0].shape, ' label shape=', train_y[0].shape)
+  train_data = myDataset(data_path, mode='train', batch_size=cfg.train_batch_size)
+  valid_data = myDataset(data_path, mode='valid', batch_size=cfg.eval_batch_size)
+  test_data = myDataset(data_path, mode='test', batch_size=cfg.eval_batch_size)
+  print('train data len: ', len(train_data))
+  print('train data[0] len: ', len(train_data[0]), ' type: ', type(train_data[0]), ' keys: ', train_data[0].keys())
   #print('valid data shapes: ', valid_x.shape, valid_y.shape)
   #print('test data shapes: ', test_x.shape, test_y.shape)
   
@@ -221,7 +223,9 @@ def main():
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
   model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   print(model)
-  optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
+  #optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
+  optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr) 
+  #Adam defaults: betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
   lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[cfg.max_epochs//2], gamma=0.1, verbose=True)
   criterion = torch.nn.CrossEntropyLoss().cuda()
   summary_writer = SummaryWriter(cfg.log_dir)
@@ -233,53 +237,71 @@ def main():
     model.train()
     train_loss_list = []
     start_time = time.time()
-    for batch_idx, sample in enumerate(train_data):
-      print('sample keys: ', sample.keys())
+    print('training will loop for {} at this epoch'.format(len(train_data)))
+    for batch_idx in range(len(train_data)):
+      #print('loop {}/{}'.format(batch_idx,len(train_data)))
+      sample = train_data[batch_idx]
       inputs = sample['images']
       targets = sample['labels']
-      print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+      if(batch_idx == 0):
+          print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+      optimizer.zero_grad()
+         
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
       loss = criterion(outputs, targets.cuda())
+      if(np.isnan(loss.item())):
+          raise ValueError('ERROR: loss value is NaN')
       train_loss_list.append(loss.item())
-      optimizer.zero_grad()
       loss.backward() #calculate gradients
       optimizer.step() #update parameters with gradient's value
-
-      if batch_idx % cfg.log_interval == 0:
+      
+      if (batch_idx % cfg.log_interval == 0):
         step = len(train_data) * epoch + batch_idx
         duration = time.time() - start_time
-
-        print('%s epoch: %d step: %d cls_loss= %.5f (%d samples/sec)' %
-              (datetime.now(), epoch, batch_idx, loss.item(),
+        #print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+        #print('input max={}, min={}, targets={}'.format(torch.max(inputs), torch.min(inputs), targets.item()))
+        print('epoch: %d step: %d/%d cls_loss= %.5f (%d samples/sec)' %
+              (epoch, batch_idx, len(train_data), loss.item(),
                cfg.train_batch_size * cfg.log_interval / duration))
 
         start_time = time.time()
         summary_writer.add_scalar('cls_loss', loss.item(), step)
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
     train_epoch_loss = np.mean(train_loss_list)
+    #print('train loss list: ', train_loss_list)
     print('train epoch loss: ', train_epoch_loss)
     return train_epoch_loss
 
   
   def valid(epoch):
+      print('====================== Validation ====================')
       #pass
       model.eval() #https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
       with torch.no_grad():
         valid_loss_list = []
-        for batch_idx, (inputs, targets) in enumerate(valid_data):
+        for batch_idx in range(len(valid_data)):
+            sample = valid_data[batch_idx]
+            inputs = sample['images']
+            targets = sample['labels']
             #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
             outputs = model(inputs.cuda()) #forward pass
             loss = criterion(outputs, targets.cuda())
             valid_loss_list.append(loss.item())
+            if(batch_idx % 1000 == 0):
+                print('iteration={}, loss={}'.format(batch_idx, loss.item()))
         valid_epoch_loss = np.mean(valid_loss_list)
         print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
       return valid_epoch_loss
 
   def normal_test():
+      print('======================= normal test ==========================')
       # pass
       model.eval()
       correct = 0
-      for batch_idx, (inputs, targets) in enumerate(test_data):
+      for batch_idx in range(len(test_data)):
+          sample = test_data[batch_idx]
+          inputs = sample['images']
+          targets = sample['labels']
           inputs, targets = inputs.cuda(), targets.cuda()
           outputs = model(inputs)
           _, predicted = torch.max(outputs.data, 1)
@@ -300,6 +322,7 @@ def main():
     with torch.no_grad():
         print('looping on test data for {} iterations'.format(len(test_data)))
         for batch_idx, (inputs, targets) in enumerate(test_data):
+
             white_count = 0 #count of white pixel in an image
             inputs, targets = inputs.cuda(), targets.cuda()
             image0 = transforms.ToPILImage()(inputs[0]).convert('RGB')
@@ -367,13 +390,26 @@ def main():
   start_training = time.time()
   train_losses = []
   valid_losses = []
+  differences = []
+  patience = 5
+  diff_times = 0
   for epoch in range(cfg.max_epochs):
     print('\nEpoch: %d =============' % epoch)
     train_loss = train(epoch)
     valid_loss = valid(epoch) #get loss value
-    lr_schedu.step(epoch)
+    difference = train_loss - valid_loss
+    print('difference b/w train and valid loss = ', difference)
+    differences.append(difference)
+    # if difference is increasing, stop training...
+    if(epoch > 1 and differences[epoch] > differences[epoch-1]):
+        print('difference is increasing..., maybe overfitting')
+        diff_times += 1
+    if(diff_times == patience):
+        raise ValueError('STOP TRAINING: early stopping at epoch: {}/{} '.format(epoch, cfg.max_epochs))
+    lr_schedu.step() #maybe stepLR
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
+
   print('train losses: ', train_losses)
   print('valid losses: ', valid_losses)
   plt.figure()
@@ -390,7 +426,8 @@ def main():
   print('training time: ', end_training - start_training, ' seconds')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
   normal_test()
-  test_accuracy, y_pred, y_true = test()
+  exit()
+  #test_accuracy, y_pred, y_true = test()
   from sklearn.metrics import confusion_matrix
   cm = confusion_matrix(y_pred=y_pred, y_true=y_true)
   print('confusion matrix')
