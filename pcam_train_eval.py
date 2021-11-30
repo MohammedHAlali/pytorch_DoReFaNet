@@ -7,6 +7,7 @@ import os
 import time
 import h5py
 import argparse
+import sklearn
 from datetime import datetime
 from PIL import Image
 
@@ -43,7 +44,7 @@ parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--wd', type=float, default=1e-4)
 
 parser.add_argument('--train_batch_size', type=int, default=16)
-parser.add_argument('--eval_batch_size', type=int, default=200)
+parser.add_argument('--eval_batch_size', type=int, default=100)
 parser.add_argument('--max_epochs', type=int, default=100)
 
 parser.add_argument('--log_interval', type=int, default=5000)
@@ -93,34 +94,38 @@ class myDataset(torch.utils.data.Dataset):
         self.X = np.array(h5X.get('x'))
         self.y = np.array(h5y.get('y'))
         print('X data shape: ', self.X.shape, ' type: ', self.X.dtype)
-        print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
+        #print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
         self.y = np.squeeze(self.y)
         print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
+        self.X, self.y = sklearn.utils.shuffle(self.X, self.y)
+        print('done shuffling dataset')
         x_filename = os.path.join(path, base_name.format(mode, 'x'))
         y_filename = os.path.join(path, base_name.format(mode, 'y'))
-        np.save(file=x_filename, arr=self.X)
-        np.save(file=y_filename, arr=self.y)
-        print('np data files saved in', x_filename)
+        #np.save(file=x_filename, arr=self.X)
+        #np.save(file=y_filename, arr=self.y)
+        #print('np data files saved in', x_filename)
         print('Loaded {} dataset with {} samples'.format(mode, len(self.X)))
-        print("# " * 100)
-        self.transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor()])
+        print("# " * 10)
+        self.transform = transforms.Compose([transforms.ToPILImage(), 
+                                            transforms.ToTensor()])
     
     def __getitem__(self, item):
         idx = item % self.__len__()
         #_slice = slice(idx*self.batch_size, (idx + 1) * self.batch_size)
         images = self.X[idx]
-        #images = self._transform(self.X[idx])
+        #print('images shape = ', images.shape, ' dtype: ', images.dtype)
+        images = self.transform(self.X[idx])
         labels = torch.tensor(self.y[idx].astype(np.int64))
-        #print('images shape = ', images.shape)
-        images = np.swapaxes(images, axis1=0, axis2=2).astype(np.float32)
-        #print('images shape = ', images.shape)
+        #print('images shape = ', images.shape, ' dtype: ', images.dtype)
+        #images = torch.transpose(images, 0, 2).type(torch.FloatTensor)# .astype(np.float32)
+        #print('images shape = ', images.shape, ' dtype: ', images.dtype)
         return {'images': images, 'labels': labels}
 
-    def _transform(self, images):
-        tensors = []
-        for image in images:
-            tensors.append(self.transform(image))
-        return torch.stack(tensors)
+    #def _transform(self, images):
+    #    tensors = []
+    #    for image in images:
+    #        tensors.append(self.transform(image))
+    #    return torch.stack(tensors)
 
     def __len__(self):
         return (len(self.X))
@@ -129,25 +134,15 @@ class myDataset(torch.utils.data.Dataset):
 
 def main():
   data_path = '../../camelyon/data/'
-  #print('loading data from: ', data_path)
-  #train_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('train', 'x')))
-  #train_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('train', 'y')))
-  #valid_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('valid', 'x')))
-  #valid_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('valid', 'y')))
-  #test_x = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('test', 'x')))
-  #test_y = np.load(os.path.join(data_path, 'camelyonpatch_level_2_split_{}_{}.h5.npy'.format('test', 'y')))
-  #train_y = np.reshape(train_y, [-1, 1])
-  #valid_y = np.reshape(valid_y, [-1, 1])
-  #test_y = np.reshape(test_y, [-1, 1])
   valid_data = myDataset(data_path, mode='valid')
-  valid_data_loader = utils.data.DataLoader(valid_data, batch_size=cfg.eval_batch_size, shuffle=True)
+  valid_data_loader = utils.data.DataLoader(valid_data, batch_size=cfg.eval_batch_size, shuffle=False)
   print('valid dataset loader: ', valid_data_loader)
   train_data = myDataset(data_path, mode='train')
   test_data = myDataset(data_path, mode='test')
   print('train_data len: ', len(train_data))
   print('train_data[0] images shape: ', train_data[0]['images'].shape)
   train_data_loader = utils.data.DataLoader(train_data, batch_size=cfg.train_batch_size, shuffle=True)
-  test_data_loader = utils.data.DataLoader(test_data, batch_size=1, shuffle=True)
+  test_data_loader = utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
   train_data = train_data_loader
   valid_data = valid_data_loader
   test_data = test_data_loader
@@ -165,8 +160,8 @@ def main():
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
   model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   print(model)
-  #optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
-  optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd) 
+  optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
+  #optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd) 
   #Adam defaults: betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
   lr_schedu = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[cfg.max_epochs//5], gamma=0.1, verbose=True)
   criterion = torch.nn.CrossEntropyLoss().cuda()
@@ -184,8 +179,14 @@ def main():
       #print('loop {}/{}'.format(batch_idx,len(train_data)))
       inputs = sample['images']
       targets = sample['labels']
-      if(batch_idx == 0):
-          print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+      if(batch_idx % 10 == 0):
+          print('iteration={}, inputs type={}, shape={}, inputs[0] max={}, min={}, targets type={}, shape={}'.format(batch_idx, inputs.dtype, inputs.shape, torch.max(inputs[0]), torch.min(inputs[0]), targets.dtype, targets.shape))
+          img = transforms.ToPILImage()(inputs[0])
+          print('img type: ', type(img))
+          img_name = os.path.join(out_path, 'exp{}_train_img{}_class{}.png'.format(cfg.exp_id,
+                                  epoch, targets[0].item()))
+          img.save(img_name)
+          print('img saved in :', img_name)
       optimizer.zero_grad()
          
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
@@ -229,8 +230,8 @@ def main():
             outputs = model(inputs.cuda()) #forward pass
             loss = criterion(outputs, targets.cuda())
             valid_loss_list.append(loss.item())
-            #if(batch_idx % 1000 == 0):
-            #    print('iteration={}, loss={}'.format(batch_idx, loss.item()))
+            if(batch_idx % 5000 == 0):
+                print('iteration={}, output_shape={} loss={}'.format(batch_idx, outputs.shape, loss.item()))
         valid_epoch_loss = np.mean(valid_loss_list)
         print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
       return valid_epoch_loss
@@ -306,7 +307,7 @@ def main():
             y_true.append(targets.item())
             #print('y_pred: ', y_pred)
             correct += predicted.eq(targets.data).cpu().sum().item()
-            if(batch_idx % 5000 == 0):
+            if(batch_idx % 4000 == 0):
                 print('============ iteration # ', batch_idx, ' ===================')
                 print('test inputs shape:', inputs.shape, ' targets shape: ', targets.shape)
                 #print('image0 size: ', image0.size, ' np image shape: ', img.shape, 
@@ -315,12 +316,12 @@ def main():
                 print('predicted (y_pred[i]): ', predicted.item())
                 print('targets (y_true[i]): ', targets.item())
                 #print('white pixels count: {}. total pixel count = {}x{}={}'.format(white_count, img.shape[0],img.shape[1], img.shape[0]*img.shape[1]))
-                #print('img max: ', np.amax(img), ' new img max: ', np.amax(new_img))
-                #print('img min: ', np.min(img), ' new img min: ', np.min(new_img))
                 orig_img = transforms.ToPILImage()(inputs[0]) #convert to PIL
-                #print('orig img type: ', type(orig_img))
+                print('orig img type: ', type(orig_img))
                 #orig_img = orig_img.numpy() #convert to numpy
                 trans_img = gs_pil_img
+                print('img max: ', np.amax(orig_img), ' new img max: ', np.amax(trans_img))
+                print('img min: ', np.min(orig_img), ' new img min: ', np.min(trans_img))
                 #print('type of orig img: ', type(orig_img))
                 #print('type trans img: ', type(trans_img))
                 orig_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_orig.png'.format(cfg.exp_id, 
@@ -348,12 +349,15 @@ def main():
   train_losses = []
   valid_losses = []
   differences = []
-  patience = cfg.max_epochs//10
+  if(cfg.max_epochs == 100):
+      patience = cfg.max_epochs//10
+  else:
+      patience = cfg.max_epochs
   diff_times = 0
   for epoch in range(cfg.max_epochs):
     print('\nEpoch: %d =============' % epoch)
     train_loss = train(epoch)
-    valid_loss = valid(epoch) #get loss value
+    valid_loss = valid(epoch)
     difference = abs(train_loss - valid_loss)
     print('difference b/w train and valid loss = ', difference)
     differences.append(difference)
@@ -361,6 +365,7 @@ def main():
     if(epoch > 1 and differences[epoch] > differences[epoch-1]):
         print('difference is increasing..., maybe overfitting')
         diff_times += 1
+        print('increasing times: ', diff_times)
     else:
         #reset patience
         diff_times = 0
@@ -387,12 +392,15 @@ def main():
   print('train valid loss curve figure saved')
   print('training time: ', end_training - start_training, ' seconds')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
+
   normal_test()
   test_accuracy, y_pred, y_true = test()
-  from sklearn.metrics import confusion_matrix
+  from sklearn.metrics import confusion_matrix, classification_report
   cm = confusion_matrix(y_pred=y_pred, y_true=y_true)
   print('confusion matrix')
   print(cm)
+  print('classification report')
+  print(classification_report(y_true, y_pred, digits=3))
   import seaborn as sns
   sns.set(font_scale=1.0) #label size
   ax = sns.heatmap(cm, annot=True, fmt="d",cmap='Greys')
