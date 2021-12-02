@@ -142,7 +142,7 @@ def main():
   print('train_data len: ', len(train_data))
   print('train_data[0] images shape: ', train_data[0]['images'].shape)
   train_data_loader = utils.data.DataLoader(train_data, batch_size=cfg.train_batch_size, shuffle=True)
-  test_data_loader = utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
+  test_data_loader = utils.data.DataLoader(test_data, batch_size=10, shuffle=False)
   train_data = train_data_loader
   valid_data = valid_data_loader
   test_data = test_data_loader
@@ -179,8 +179,8 @@ def main():
       #print('loop {}/{}'.format(batch_idx,len(train_data)))
       inputs = sample['images']
       targets = sample['labels']
-      if(batch_idx % 10 == 0):
-          print('iteration={}, inputs type={}, shape={}, inputs[0] max={}, min={}, targets type={}, shape={}'.format(batch_idx, inputs.dtype, inputs.shape, torch.max(inputs[0]), torch.min(inputs[0]), targets.dtype, targets.shape))
+      if(batch_idx == 0 and epoch % 10 == 0):
+          print('iteration={}, inputs type={}, shape={}, inputs[0] max={}, min={}, \ntargets type={}, shape={}'.format(batch_idx, inputs.dtype, inputs.shape, torch.max(inputs[0]), torch.min(inputs[0]), targets.dtype, targets.shape))
           img = transforms.ToPILImage()(inputs[0])
           print('img type: ', type(img))
           img_name = os.path.join(out_path, 'exp{}_train_img{}_class{}.png'.format(cfg.exp_id,
@@ -190,7 +190,10 @@ def main():
       optimizer.zero_grad()
          
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
+      #print('outputs: ', outputs)
+      #print('targets: ', targets)
       loss = criterion(outputs, targets.cuda())
+      #print('loss = ', loss.item())
       if(np.isnan(loss.item())):
           raise ValueError('ERROR: loss value is NaN')
       train_loss_list.append(loss.item())
@@ -225,7 +228,7 @@ def main():
             inputs = sample['images']
             targets = sample['labels']
             if(batch_idx == 0):
-                print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+                print('iteration={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
             #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
             outputs = model(inputs.cuda()) #forward pass
             loss = criterion(outputs, targets.cuda())
@@ -237,24 +240,82 @@ def main():
       return valid_epoch_loss
 
   def normal_test():
-      print('======================= normal test ==========================')
+      print('======================= normal test with grayscale ==========================')
       # pass
       model.eval()
-      correct = 0
+      #correct = 0
+      #gs_correct = 0
+      rgb_y_pred = []
+      gs_y_pred = []
+      sp_y_pred = []
+      y_true = []
+      print('loop on test data for length = ', len(test_data))
       for batch_idx, sample in enumerate(test_data):
           inputs = sample['images']
           targets = sample['labels']
           if(batch_idx == 0):
-              if(batch_idx == 0):
-                    print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+              print('iter={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
           inputs, targets = inputs.cuda(), targets.cuda()
-          outputs = model(inputs)
-          _, predicted = torch.max(outputs.data, 1)
-          correct += predicted.eq(targets.data).cpu().sum().item()
-      acc = 100. * correct / len(test_data)
-      print('%s------------------------------------------------------ '
-                'Precision@1: %.2f%% \n' % (datetime.now(), acc))
-      summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
+          
+          for i, an_input in enumerate(inputs):
+              a_target = targets[i]
+              #print('an input shape: ', an_input.shape)
+              #print('a target shape: ', a_target.shape)
+              gs_input = transforms.Compose([transforms.ToPILImage()
+                                    ,transforms.Grayscale(num_output_channels=3)
+                                    ,transforms.ToTensor()
+                                        ])(an_input)
+
+              an_input = torch.unsqueeze(an_input, dim=0)
+              gs_input = torch.unsqueeze(gs_input, dim=0)
+              img = an_input.numpy()
+              print('img type: ', type(img), ' shape: ', im.shape)
+              new_img = np.zeros(shape=(img.shape), dtype='uint8')
+              white_count = 0
+              #loop over each pixel
+              for i in range(img.shape[0]):
+                  for j in range(img.shape[1]):
+                      print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                      if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
+                          print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                          #print('maybe white pixel')
+                          white_count += 1
+                          #leave new_image[i, j] = 0
+                      else:
+                          #insert original pixel in new image
+                          new_img[i, j] = img[i, j]
+              sparsity_img = transforms.ToTensor()(new_img)
+              #an_input = an_input.exapnd(1, an_input.shape[0], an_input.shape[1], an_input.shape[2])
+              #gs_input = gs_input.exapnd(1, an_input.shape[0], an_input.shape[1], an_input.shape[2])
+              print('inputs shape: ', an_input.shape)
+              print('gs inputs shape: ', gs_input.shape)
+              outputs = model(an_input)
+              gs_outputs = model(gs_input.cuda())
+              sparsity_output = model(new_img.cuda())
+              _, predicted = torch.argmax(outputs.data)
+              _, gs_predicted = torch.argmax(gs_outputs.data)
+              _, sparsity_predicted = torch.argmax(sparsity_output, 1)
+              print('RGB pred={}, GS pred={}, SP pred={} GS output={}, actual={}'.format(predicted.item(), 
+                                                gs_predicted.item(), sparsity_predicted, 
+                                                gs_outputs.data, a_target.item()))
+              
+              rgb_y_pred.append(predicted.item())
+              gs_y_pred.append(gs_predicted.item())
+              sp_y_pred.append(sparsity_predicted.item())
+              y_true.append(a_target.item())
+              #correct += predicted.eq(a_target.data).cpu().sum().item()
+              #gs_correct += gs_predicted.eq(a_target.data).cpu().sum().item()
+              #print('RGB correct = {}, GS correct = {}'.format(correct, gs_correct))
+          assert(len(rgb_y_pred) == len(gs_y_pred) == len(y_true))
+          if(batch_idx == 0):
+              print('y lengths: ', len(rgb_y_pred), len(gs_y_pred), len(y_true))
+      #acc = 100. * correct / len(test_data)
+      #gs_acc = 100. * gs_correct / len(test_data)
+      #print('%s------------------- Precision@1: %.2f%% \n' % (datetime.now(), acc))
+      #print('%s------------------- Grayscale Precision@1: %.2f%% \n' % (datetime.now(), gs_acc))
+      #summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
+      return np.array(rgb_y_pred), np.array(gs_y_pred), np.array(sp_y_pred), np.array(y_true)
+
 
   def test():
     print(' ------------------------ modified test -------------------------')
@@ -274,38 +335,40 @@ def main():
                 print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
             #white_count = 0 #count of white pixel in an image
             inputs, targets = inputs.cuda(), targets.cuda()
-            gs_pil_img = transforms.Compose([transforms.ToPILImage(), 
-                     transforms.Grayscale(num_output_channels=3)])(inputs[0])
+            pil_img = transforms.Compose([transforms.ToPILImage()
+                     #, transforms.Grayscale(num_output_channels=3)
+                     ])(inputs[0])
             #print('grayscale inputs type: ', type(grayscale_input))
-            images = np.array(gs_pil_img)
-            images = np.swapaxes(images, axis1=0, axis2=2)
+            img = np.array(pil_img)
+            #images = np.swapaxes(images, axis1=0, axis2=2)
             #images = np.expand_dims(images, axis=0)
-            images = np.expand_dims(images, axis=0).astype('float32')
+            #images = np.expand_dims(images, axis=0).astype('float32')
             #print(' dtype: ', images.dtype)
             #print(' shape: ', images.shape)
-            images = torch.from_numpy(images).cuda()
+            #images = torch.from_numpy(images).cuda()
             #image0 = image0.convert('RGB')
             #image0 = image0.resize(size=(image0.size[0]-6, image0.size[1]-6))
             #img = np.array(image0)
-            #new_img = np.zeros(shape=(img.shape), dtype='uint8')
-                                             
+            new_img = np.zeros(shape=(img.shape), dtype='uint8')
+            white_count = 0
             #loop over each pixel
-            #for i in range(img.shape[0]):
-            #    for j in range(img.shape[1]):
-                    #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-            #        if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                        #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-                        #print('maybe white pixel')
-            #            white_count += 1
-            #        else:
-            #            new_img[i, j] = img[i, j]
+            for i in range(img.shape[0]):
+                for j in range(img.shape[1]):
+                    print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                    if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
+                        print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                        print('maybe white pixel')
+                        white_count += 1
+                        #leave new_image[i, j] = 0
+                    else:
+                        new_img[i, j] = img[i, j]
             outputs = model(images)
-            #print('output shape: ', outputs.shape)
+            print('output shape: ', outputs.shape)
             _, predicted = torch.max(outputs.data, 1)
-            #print('predicted (y_pred[i]): ', predicted.item())
+            print('predicted (y_pred[i]): ', predicted.item())
             y_pred.append(predicted.item())
             y_true.append(targets.item())
-            #print('y_pred: ', y_pred)
+            print('y_pred: ', y_pred)
             correct += predicted.eq(targets.data).cpu().sum().item()
             if(batch_idx % 4000 == 0):
                 print('============ iteration # ', batch_idx, ' ===================')
@@ -316,10 +379,11 @@ def main():
                 print('predicted (y_pred[i]): ', predicted.item())
                 print('targets (y_true[i]): ', targets.item())
                 #print('white pixels count: {}. total pixel count = {}x{}={}'.format(white_count, img.shape[0],img.shape[1], img.shape[0]*img.shape[1]))
-                orig_img = transforms.ToPILImage()(inputs[0]) #convert to PIL
+                #orig_img = transforms.ToPILImage()(inputs[0]) #convert to PIL
+                orig_img = pil_img
                 print('orig img type: ', type(orig_img))
                 #orig_img = orig_img.numpy() #convert to numpy
-                trans_img = gs_pil_img
+                trans_img = Image.fromarray(new_img)
                 print('img max: ', np.amax(orig_img), ' new img max: ', np.amax(trans_img))
                 print('img min: ', np.min(orig_img), ' new img min: ', np.min(trans_img))
                 #print('type of orig img: ', type(orig_img))
@@ -393,18 +457,37 @@ def main():
   print('training time: ', end_training - start_training, ' seconds')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
 
-  normal_test()
-  test_accuracy, y_pred, y_true = test()
-  from sklearn.metrics import confusion_matrix, classification_report
-  cm = confusion_matrix(y_pred=y_pred, y_true=y_true)
-  print('confusion matrix')
+  rgb_y_pred, gs_y_pred, sp_y_pred, y_true = normal_test()
+  if(rgb_y_pred.shape != gs_y_pred.shape or rgb_y_pred.shape != y_true.shape):
+      print('rgb_y.shape={}, gs_y_pred.shape={}, y_true.shape={}'.format(rgb_y_pred.shape, 
+          gs_y_pred.shape, y_true.shape))
+      raise ValueError('ERROR: y shapes differ')
+  #test_accuracy, y_pred, y_true = test()
+  from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+  # 1: RGB testing results
+  rgb_test_accuracy = accuracy_score(y_pred=rgb_y_pred, y_true=y_true)
+  cm = confusion_matrix(y_pred=rgb_y_pred, y_true=y_true)
+  print('rgb confusion matrix')
   print(cm)
-  print('classification report')
-  print(classification_report(y_true, y_pred, digits=3))
+  print('rgb classification report')
+  print(classification_report(y_true=y_true, y_pred=rgb_y_pred, digits=3))
+  # 2: Grayscale testing results
+  cm2 = confusion_matrix(y_pred=gs_y_pred, y_true=y_true)
+  print('gs confusion matrix')
+  print(cm2)
+  print('gs classification report')
+  print(classification_report(y_true=y_true, y_pred=gs_y_pred, digits=3))
+  # 3: Sparsity testing results
+  cm3 = confusion_matrix(y_pred=sp_y_pred, y_true=y_true)
+  print('sp confusion matrix')
+  print(cm3)
+  print('sp classification report')
+  print(classification_report(y_true=y_true, y_pred=sp_y_pred, digits=3))
+
   import seaborn as sns
   sns.set(font_scale=1.0) #label size
   ax = sns.heatmap(cm, annot=True, fmt="d",cmap='Greys')
-  title = 'Testing Accuracy=' + str(np.around(test_accuracy, decimals=2))
+  title = 'RGB Testing Accuracy=' + str(np.around(rgb_test_accuracy, decimals=2))
   plt.title(title)
   plt.xlabel('Predicted Classes')
   plt.ylabel('True Classes')
