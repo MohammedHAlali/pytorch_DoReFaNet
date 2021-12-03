@@ -173,7 +173,7 @@ def main():
   def train(epoch):
     model.train()
     train_loss_list = []
-    start_time = time.time()
+    train_batch_time_list = []
     #print('training will loop for {} at this epoch'.format(len(train_data)))
     for batch_idx, sample in enumerate(train_data):
       #print('loop {}/{}'.format(batch_idx,len(train_data)))
@@ -187,11 +187,10 @@ def main():
                                   epoch, targets[0].item()))
           img.save(img_name)
           print('img saved in :', img_name)
+      start_batch_train = time.time()
       optimizer.zero_grad()
          
       outputs = model(inputs.cuda()) #forward pass, outputs = yhat
-      #print('outputs: ', outputs)
-      #print('targets: ', targets)
       loss = criterion(outputs, targets.cuda())
       #print('loss = ', loss.item())
       if(np.isnan(loss.item())):
@@ -199,23 +198,26 @@ def main():
       train_loss_list.append(loss.item())
       loss.backward() #calculate gradients
       optimizer.step() #update parameters with gradient's value
-      
+      batch_train_time = time.time() - start_batch_train
+      train_batch_time_list.append(batch_train_time)
       if (batch_idx % cfg.log_interval == 0):
         step = len(train_data) * epoch + batch_idx
-        duration = time.time() - start_time
+        #duration = time.time() - start_time
         #print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
         #print('input max={}, min={}, targets={}'.format(torch.max(inputs), torch.min(inputs), targets.item()))
-        print('epoch: %d step: %d/%d cls_loss= %.5f (%d samples/sec)' %
-              (epoch, batch_idx, len(train_data), loss.item(),
-               cfg.train_batch_size * cfg.log_interval / duration))
+        print('epoch: %d step: %d/%d cls_loss= %.5f' %
+              (epoch, batch_idx, len(train_data), loss.item()))
+               #cfg.train_batch_size * cfg.log_interval / duration))
+        #print('outputs shape={}, target shape={}'.format(outputs.shape, targets.shape))
 
-        start_time = time.time()
+        #start_time = time.time()
         summary_writer.add_scalar('cls_loss', loss.item(), step)
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
-    train_epoch_loss = np.mean(train_loss_list)
+    train_loss_per_epoch = np.mean(train_loss_list)
+    train_time_per_epoch = np.sum(train_batch_time_list)
     #print('train loss list: ', train_loss_list)
-    print('train epoch loss: ', train_epoch_loss)
-    return train_epoch_loss
+    #print('train epoch loss: ', train_epoch_loss)
+    return train_loss_per_epoch, train_time_per_epoch
 
   
   def valid(epoch):
@@ -224,23 +226,28 @@ def main():
       model.eval() #https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
       with torch.no_grad():
         valid_loss_list = []
+        valid_batch_time_list = []
         for batch_idx, sample in enumerate(valid_data):
             inputs = sample['images']
             targets = sample['labels']
             if(batch_idx == 0):
                 print('iteration={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
             #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
+            start_valid = time.time()
             outputs = model(inputs.cuda()) #forward pass
             loss = criterion(outputs, targets.cuda())
+            valid_batch_time = time.time() - start_valid
+            valid_batch_time_list.append(valid_batch_time)
             valid_loss_list.append(loss.item())
             if(batch_idx % 5000 == 0):
                 print('iteration={}, output_shape={} loss={}'.format(batch_idx, outputs.shape, loss.item()))
-        valid_epoch_loss = np.mean(valid_loss_list)
-        print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
-      return valid_epoch_loss
+        valid_loss_per_epoch = np.mean(valid_loss_list)
+        valid_time_per_epoch = np.sum(valid_batch_time_list)
+        #print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
+      return valid_loss_per_epoch, valid_time_per_epoch
 
   def normal_test():
-      print('======================= normal test with grayscale ==========================')
+      print('======================= testing ==========================')
       # pass
       model.eval()
       #correct = 0
@@ -249,6 +256,8 @@ def main():
       gs_y_pred = []
       sp_y_pred = []
       y_true = []
+      rgb_time_list = []
+      sp_time_list = []
       print('loop on test data for length = ', len(test_data))
       for batch_idx, sample in enumerate(test_data):
           inputs = sample['images']
@@ -261,6 +270,7 @@ def main():
               a_target = targets[i]
               #print('an input shape: ', an_input.shape)
               #print('a target shape: ', a_target.shape)
+              img = transforms.ToPILImage()(an_input)
               gs_input = transforms.Compose([transforms.ToPILImage()
                                     ,transforms.Grayscale(num_output_channels=3)
                                     ,transforms.ToTensor()
@@ -268,16 +278,17 @@ def main():
 
               an_input = torch.unsqueeze(an_input, dim=0)
               gs_input = torch.unsqueeze(gs_input, dim=0)
-              img = an_input.numpy()
-              print('img type: ', type(img), ' shape: ', im.shape)
+              #img = an_input.cpu().numpy()
+              img = np.array(img)
+              print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
               new_img = np.zeros(shape=(img.shape), dtype='uint8')
               white_count = 0
               #loop over each pixel
               for i in range(img.shape[0]):
                   for j in range(img.shape[1]):
-                      print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                      #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
                       if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                          print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                          print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
                           #print('maybe white pixel')
                           white_count += 1
                           #leave new_image[i, j] = 0
@@ -289,12 +300,22 @@ def main():
               #gs_input = gs_input.exapnd(1, an_input.shape[0], an_input.shape[1], an_input.shape[2])
               print('inputs shape: ', an_input.shape)
               print('gs inputs shape: ', gs_input.shape)
+              
+              start_rgb = time.time()
               outputs = model(an_input)
-              gs_outputs = model(gs_input.cuda())
-              sparsity_output = model(new_img.cuda())
+              print('rgb outputs shape: ', outputs.shape)
               _, predicted = torch.argmax(outputs.data)
+              rgb_time_list.append(time.time() - start_rgb)
+
+              
+              gs_outputs = model(gs_input.cuda())
               _, gs_predicted = torch.argmax(gs_outputs.data)
-              _, sparsity_predicted = torch.argmax(sparsity_output, 1)
+              
+              start_sp = time.time()
+              sparsity_output = model(new_img.cuda())
+              _, sparsity_predicted = torch.argmax(sparsity_output)
+              sp_time_list.append(time.time() - start_sp)
+
               print('RGB pred={}, GS pred={}, SP pred={} GS output={}, actual={}'.format(predicted.item(), 
                                                 gs_predicted.item(), sparsity_predicted, 
                                                 gs_outputs.data, a_target.item()))
@@ -314,9 +335,18 @@ def main():
       #print('%s------------------- Precision@1: %.2f%% \n' % (datetime.now(), acc))
       #print('%s------------------- Grayscale Precision@1: %.2f%% \n' % (datetime.now(), gs_acc))
       #summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
-      return np.array(rgb_y_pred), np.array(gs_y_pred), np.array(sp_y_pred), np.array(y_true)
+      rgb_total_time = np.sum(rgb_time_list)
+      print('total time for rgb testing: ', rgb_total_time)
+      sp_total_time = np.sum(sp_time_list)
+      print('total time for sparsity testing:', sp_total_time)
 
+      rgb_y_pred = np.array(rgb_y_pred)
+      gs_y_pred = np.array(gs_y_pred)
+      sp_y_pred = np.array(sp_y_pred)
+      y_true = np.array(y_true)
+      return rgb_y_pred, gs_y_pred, sp_y_pred, y_true, rgb_total_time, sp_total_time
 
+  '''
   def test():
     print(' ------------------------ modified test -------------------------')
     # pass
@@ -408,41 +438,52 @@ def main():
     #print('y pred shape: ', y_pred.shape)
     #print('y true shape: ', y_true.shape)
     return acc, y_pred, y_true
+    '''
 
-  start_training = time.time()
   train_losses = []
   valid_losses = []
-  differences = []
-  if(cfg.max_epochs == 100):
-      patience = cfg.max_epochs//10
-  else:
-      patience = cfg.max_epochs
-  diff_times = 0
+  train_times = []
+  valid_times = []
+  #differences = []
+  #if(cfg.max_epochs == 100):
+  #    patience = cfg.max_epochs//10
+  #else:
+  #    patience = cfg.max_epochs
+  #diff_times = 0
   for epoch in range(cfg.max_epochs):
     print('\nEpoch: %d =============' % epoch)
-    train_loss = train(epoch)
-    valid_loss = valid(epoch)
-    difference = abs(train_loss - valid_loss)
-    print('difference b/w train and valid loss = ', difference)
-    differences.append(difference)
+    train_loss, train_epoch_time = train(epoch)
+    valid_loss, valid_epoch_time = valid(epoch)
+    print('train loss = {}, train epoch time = {}, valid loss = {}, valid epoch time = {}'.format(
+        train_loss, train_epoch_time, valid_loss, valid_epoch_time))
+    #difference = abs(train_loss - valid_loss)
+    #print('difference b/w train and valid loss = ', difference)
+    #differences.append(difference)
     # if difference is increasing, stop training...
-    if(epoch > 1 and differences[epoch] > differences[epoch-1]):
-        print('difference is increasing..., maybe overfitting')
-        diff_times += 1
-        print('increasing times: ', diff_times)
-    else:
+    #if(epoch > 1 and differences[epoch] > differences[epoch-1]):
+    #    print('difference is increasing..., maybe overfitting')
+    #    diff_times += 1
+    #    print('increasing times: ', diff_times)
+    #else:
         #reset patience
-        diff_times = 0
+    #    diff_times = 0
 
-    if(diff_times == patience):
-        print('STOP TRAINING: early stopping at epoch: {}/{} '.format(epoch, cfg.max_epochs))
-        break
+    #if(diff_times == patience):
+    #    print('STOP TRAINING: early stopping at epoch: {}/{} '.format(epoch, cfg.max_epochs))
+    #    break
     lr_schedu.step() #maybe stepLR
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
-
+    train_times.append(train_epoch_time)
+    valid_times.append(valid_epoch_time)
+  print('train valid loss curve figure saved')
+  torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
   print('train losses: ', train_losses)
   print('valid losses: ', valid_losses)
+  print('average train loss per epoch: ', np.mean(train_losses))
+  print('average valid loss per epoch: ', np.mean(valid_losses))
+  print('average train time per epoch: ', np.mean(train_times))
+  print('average valid time per epoch: ', np.mean(valid_times))
   plt.figure()
   plt.plot(np.log(train_losses), 'g--', label='training loss')
   plt.plot(np.log(valid_losses), '-', label='validation loss')
@@ -450,39 +491,45 @@ def main():
   plt.ylabel('Loss')
   plt.xlabel('Epoch')
   plt.legend(loc='upper right')
-  plt.savefig('{}/exp_{}_train_valid_loss.png'.format(out_path, cfg.exp_id), dpi=300)
+  fig_path = '{}/exp_{}_train_valid_loss.png'.format(out_path, cfg.exp_id)
+  plt.savefig(fig_path, dpi=300)
   plt.close()
-  end_training = time.time()
-  print('train valid loss curve figure saved')
-  print('training time: ', end_training - start_training, ' seconds')
-  torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
+  print('train valid loss curve figure saved in path: ', fig_path)
 
-  rgb_y_pred, gs_y_pred, sp_y_pred, y_true = normal_test()
+  rgb_y_pred, gs_y_pred, sp_y_pred, y_true, rgb_test_time, sp_test_time = normal_test()
   if(rgb_y_pred.shape != gs_y_pred.shape or rgb_y_pred.shape != y_true.shape):
       print('rgb_y.shape={}, gs_y_pred.shape={}, y_true.shape={}'.format(rgb_y_pred.shape, 
           gs_y_pred.shape, y_true.shape))
       raise ValueError('ERROR: y shapes differ')
+  print('RGB total testing time: ', rgb_test_time)
+  print('Sparsity total testing time: ', sp_test_time)
   #test_accuracy, y_pred, y_true = test()
-  from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+  from sklearn import metrics
   # 1: RGB testing results
-  rgb_test_accuracy = accuracy_score(y_pred=rgb_y_pred, y_true=y_true)
-  cm = confusion_matrix(y_pred=rgb_y_pred, y_true=y_true)
-  print('rgb confusion matrix')
-  print(cm)
-  print('rgb classification report')
-  print(classification_report(y_true=y_true, y_pred=rgb_y_pred, digits=3))
+  rgb_test_accuracy = metrics.accuracy_score(y_pred=rgb_y_pred, y_true=y_true)
+  rgb_f1 = metrics.f1_score(y_pred=rgb_y_pred, y_true=y_true)
+  print('RGB F1 score :', rgb_f1)
+  cm = metrics.confusion_matrix(y_pred=rgb_y_pred, y_true=y_true)
+  #print('rgb confusion matrix')
+  #print(cm)
+  #print('rgb classification report')
+  #print(metrics.classification_report(y_true=y_true, y_pred=rgb_y_pred, digits=3))
   # 2: Grayscale testing results
-  cm2 = confusion_matrix(y_pred=gs_y_pred, y_true=y_true)
-  print('gs confusion matrix')
-  print(cm2)
-  print('gs classification report')
-  print(classification_report(y_true=y_true, y_pred=gs_y_pred, digits=3))
+  gs_f1 = metrics.f1_score(y_pred=gs_y_pred, y_true=y_true)
+  print('GS F1 score :', gs_f1)
+  cm2 = metrics.confusion_matrix(y_pred=gs_y_pred, y_true=y_true)
+  #print('gs confusion matrix')
+  #print(cm2)
+  #print('gs classification report')
+  #print(metrics.classification_report(y_true=y_true, y_pred=gs_y_pred, digits=3))
   # 3: Sparsity testing results
-  cm3 = confusion_matrix(y_pred=sp_y_pred, y_true=y_true)
-  print('sp confusion matrix')
-  print(cm3)
-  print('sp classification report')
-  print(classification_report(y_true=y_true, y_pred=sp_y_pred, digits=3))
+  sp_f1 = metrics.f1_score(y_pred=sp_y_pred, y_true=y_true)
+  print('SP F1 score :', sp_f1)
+  #cm3 = metrics.confusion_matrix(y_pred=sp_y_pred, y_true=y_true)
+  #print('sp confusion matrix')
+  #print(cm3)
+  #print('sp classification report')
+  #print(metrics.classification_report(y_true=y_true, y_pred=sp_y_pred, digits=3))
 
   import seaborn as sns
   sns.set(font_scale=1.0) #label size
