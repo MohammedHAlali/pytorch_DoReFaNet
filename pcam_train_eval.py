@@ -39,14 +39,14 @@ parser.add_argument('--pretrain_dir', type=str, default='./ckpt/resnet20_baselin
 parser.add_argument('--exp_id', type=int, default=0) #logging
 parser.add_argument('--Wbits', type=int, default=32)
 parser.add_argument('--Abits', type=int, default=32)
-
-parser.add_argument('--lr', type=float, default=0.001)
+parser.add_argument('--Dropout', action='store_true')
+parser.add_argument('--lr', type=float, default=0.0001)
 parser.add_argument('--wd', type=float, default=1e-4)
-
-parser.add_argument('--train_batch_size', type=int, default=16)
-parser.add_argument('--eval_batch_size', type=int, default=100)
+parser.add_argument('--color_mode', type=str, default='rgb') #rgb, grayscale, sp
+parser.add_argument('--train_batch_size', type=int, default=32)
+parser.add_argument('--eval_batch_size', type=int, default=1)
 parser.add_argument('--max_epochs', type=int, default=100)
-
+parser.add_argument('--model', type=str, default='resnet20')
 parser.add_argument('--log_interval', type=int, default=5000)
 #parser.add_argument('--use_gpu', type=str, default='') #empty means use no gpu
 parser.add_argument('--use_gpu', type=str, default='0')
@@ -80,10 +80,17 @@ os.makedirs(cfg.ckpt_dir, exist_ok=True)
 
 # modified from: https://github.com/alexmagsam/metastasis-detection/blob/master/data.py
 class myDataset(torch.utils.data.Dataset):
-    def __init__(self, path, mode): #later add augmentation
+    def __init__(self, path, mode): #later add augmentation [DONE]
         super().__init__()
         assert mode in ['train', 'valid', 'test']
+        if(cfg.color_mode == 'grayscale'):
+            base_name = '{}_grayscale_{}.npy'
+            self.X = np.load(os.path.join(path, base_name.format(mode, 'X')))
+            self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
+            print('loaded data shapes: ', self.X.shape, self.y.shape)
+            exit()
         base_name = "camelyonpatch_level_2_split_{}_{}.h5"
+        #num_white_images = 0
         print("# " * 10)
         print('Loading {} dataset...'.format(mode))
         # Open the files
@@ -106,20 +113,62 @@ class myDataset(torch.utils.data.Dataset):
         #print('np data files saved in', x_filename)
         print('Loaded {} dataset with {} samples'.format(mode, len(self.X)))
         print("# " * 10)
-        self.transform = transforms.Compose([transforms.ToPILImage(), 
+        #TODO: add color jitter later
+        #print('performing random data augmentation: ho-or-ver flip, rotation(90)')
+        self.transform = transforms.Compose([transforms.ToPILImage(),
+                                            #transforms.RandomHorizontalFlip(),
+                                            #transforms.RandomVerticalFlip(),
+                                            #transforms.RandomRotation(90),
                                             transforms.ToTensor()])
     
     def __getitem__(self, item):
         idx = item % self.__len__()
         #_slice = slice(idx*self.batch_size, (idx + 1) * self.batch_size)
-        images = self.X[idx]
+        image = self.X[idx]
         #print('images shape = ', images.shape, ' dtype: ', images.dtype)
-        images = self.transform(self.X[idx])
-        labels = torch.tensor(self.y[idx].astype(np.int64))
+        if(cfg.color_mode == 'grayscale'):
+            #print('convert to grayscale image')
+            image = transforms.Compose([transforms.ToPILImage()
+                        ,transforms.Grayscale(num_output_channels=3)
+                        ,transforms.ToTensor()
+                        ])(image)
+        elif(cfg.color_mode == 'sparsity'):
+            #print('convert image to sparsity')
+            img = transforms.ToPILImage()(image)
+            img = np.array(img)
+            #print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
+            new_img = np.zeros(shape=(img.shape), dtype='uint8')
+            white_count = 0
+            #loop over each pixel
+            for i in range(img.shape[0]):
+                for j in range(img.shape[1]):
+                    #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
+                    if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
+                        #print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
+                        #print('maybe white pixel')
+                        white_count += 1
+                    else:
+                        #insert original pixel in new image
+                        new_img[i, j] = img[i, j]
+            #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
+            white_ratio = white_count/(img.shape[0]*img.shape[1])
+            #print('white ratio: ', white_ratio)
+            image = transforms.ToTensor()(new_img)
+            #sp_input = torch.unsqueeze(sparsity_img, dim=0)
+            #print('image shape: ', image.shape)
+            #if(white_ratio == 1.0):
+            #    num_white_images += 1
+            #    #print('ERROR: white ratio = ', white_ratio)
+            #    #TODO: SKIP IMAGE
+            #    #return None
+        else:
+            image = self.transform(self.X[idx])
+
+        label = torch.tensor(self.y[idx].astype(np.int64))
         #print('images shape = ', images.shape, ' dtype: ', images.dtype)
         #images = torch.transpose(images, 0, 2).type(torch.FloatTensor)# .astype(np.float32)
         #print('images shape = ', images.shape, ' dtype: ', images.dtype)
-        return {'images': images, 'labels': labels}
+        return {'images': image, 'labels': label}
 
     #def _transform(self, images):
     #    tensors = []
@@ -133,7 +182,7 @@ class myDataset(torch.utils.data.Dataset):
 
 
 def main():
-  data_path = '../../camelyon/data/'
+  data_path = '../data/camelyon/'
   valid_data = myDataset(data_path, mode='valid')
   valid_data_loader = utils.data.DataLoader(valid_data, batch_size=cfg.eval_batch_size, shuffle=False)
   print('valid dataset loader: ', valid_data_loader)
@@ -142,7 +191,7 @@ def main():
   print('train_data len: ', len(train_data))
   print('train_data[0] images shape: ', train_data[0]['images'].shape)
   train_data_loader = utils.data.DataLoader(train_data, batch_size=cfg.train_batch_size, shuffle=True)
-  test_data_loader = utils.data.DataLoader(test_data, batch_size=10, shuffle=False)
+  test_data_loader = utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
   train_data = train_data_loader
   valid_data = valid_data_loader
   test_data = test_data_loader
@@ -158,7 +207,10 @@ def main():
   
   print('==> Building ResNet..')
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
-  model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
+  if(cfg.model == 'resnet20'):
+      model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
+  elif(cfg.model == 'resnet56'):
+      model = resnet56(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
   print(model)
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   #optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd) 
@@ -181,12 +233,12 @@ def main():
       targets = sample['labels']
       if(batch_idx == 0 and epoch % 10 == 0):
           print('iteration={}, inputs type={}, shape={}, inputs[0] max={}, min={}, \ntargets type={}, shape={}'.format(batch_idx, inputs.dtype, inputs.shape, torch.max(inputs[0]), torch.min(inputs[0]), targets.dtype, targets.shape))
-          img = transforms.ToPILImage()(inputs[0])
-          print('img type: ', type(img))
-          img_name = os.path.join(out_path, 'exp{}_train_img{}_class{}.png'.format(cfg.exp_id,
-                                  epoch, targets[0].item()))
-          img.save(img_name)
-          print('img saved in :', img_name)
+          #img = transforms.ToPILImage()(inputs[0])
+          #print('img type: ', type(img))
+          #img_name = os.path.join(out_path, 'exp{}_train_img{}_class{}.png'.format(cfg.exp_id,
+          #                        epoch, targets[0].item()))
+          #img.save(img_name)
+          #print('img saved in :', img_name)
       start_batch_train = time.time()
       optimizer.zero_grad()
          
@@ -200,13 +252,14 @@ def main():
       optimizer.step() #update parameters with gradient's value
       batch_train_time = time.time() - start_batch_train
       train_batch_time_list.append(batch_train_time)
-      if (batch_idx % cfg.log_interval == 0):
+      if (batch_idx % cfg.log_interval == 0 or batch_idx == cfg.max_epochs):
         step = len(train_data) * epoch + batch_idx
         #duration = time.time() - start_time
         #print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
         #print('input max={}, min={}, targets={}'.format(torch.max(inputs), torch.min(inputs), targets.item()))
         print('epoch: %d step: %d/%d cls_loss= %.5f' %
               (epoch, batch_idx, len(train_data), loss.item()))
+        #print('train time per batch list: length=', len(train_batch_time_list))
                #cfg.train_batch_size * cfg.log_interval / duration))
         #print('outputs shape={}, target shape={}'.format(outputs.shape, targets.shape))
 
@@ -215,7 +268,6 @@ def main():
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
     train_loss_per_epoch = np.mean(train_loss_list)
     train_time_per_epoch = np.sum(train_batch_time_list)
-    #print('train loss list: ', train_loss_list)
     #print('train epoch loss: ', train_epoch_loss)
     return train_loss_per_epoch, train_time_per_epoch
 
@@ -230,8 +282,8 @@ def main():
         for batch_idx, sample in enumerate(valid_data):
             inputs = sample['images']
             targets = sample['labels']
-            if(batch_idx == 0):
-                print('iteration={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
+            #if(batch_idx == 0):
+            #    print('iteration={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
             #print('inputs shape={} type={}'.format(inputs.shape, type(inputs)))
             start_valid = time.time()
             outputs = model(inputs.cuda()) #forward pass
@@ -239,8 +291,9 @@ def main():
             valid_batch_time = time.time() - start_valid
             valid_batch_time_list.append(valid_batch_time)
             valid_loss_list.append(loss.item())
-            if(batch_idx % 5000 == 0):
-                print('iteration={}, output_shape={} loss={}'.format(batch_idx, outputs.shape, loss.item()))
+            if(batch_idx % 10000 == 0):
+                print('iteration={}, output_shape={} loss={}, lenght of valid batch time list={}'.format(
+                    batch_idx, outputs.shape, loss.item(), len(valid_batch_time_list)))
         valid_loss_per_epoch = np.mean(valid_loss_list)
         valid_time_per_epoch = np.sum(valid_batch_time_list)
         #print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
@@ -258,6 +311,8 @@ def main():
       y_true = []
       rgb_time_list = []
       sp_time_list = []
+      white_ratioes = []
+      error_analysis_count = 20
       print('loop on test data for length = ', len(test_data))
       for batch_idx, sample in enumerate(test_data):
           inputs = sample['images']
@@ -266,85 +321,121 @@ def main():
               print('iter={}, inputs type={}, inputs shape={}, \ntargets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
           inputs, targets = inputs.cuda(), targets.cuda()
           
-          for i, an_input in enumerate(inputs):
-              a_target = targets[i]
+          for k, an_input in enumerate(inputs):
+              a_target = targets[k]
               #print('an input shape: ', an_input.shape)
               #print('a target shape: ', a_target.shape)
               img = transforms.ToPILImage()(an_input)
-              gs_input = transforms.Compose([transforms.ToPILImage()
-                                    ,transforms.Grayscale(num_output_channels=3)
-                                    ,transforms.ToTensor()
-                                        ])(an_input)
-
-              an_input = torch.unsqueeze(an_input, dim=0)
-              gs_input = torch.unsqueeze(gs_input, dim=0)
               #img = an_input.cpu().numpy()
               img = np.array(img)
-              print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
-              new_img = np.zeros(shape=(img.shape), dtype='uint8')
-              white_count = 0
+              #print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
+              #new_img = np.zeros(shape=(img.shape), dtype='uint8')
+              #white_count = 0
               #loop over each pixel
-              for i in range(img.shape[0]):
-                  for j in range(img.shape[1]):
+              #for i in range(img.shape[0]):
+              #    for j in range(img.shape[1]):
                       #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-                      if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                          print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
+              #        if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
+                          #print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
                           #print('maybe white pixel')
-                          white_count += 1
-                          #leave new_image[i, j] = 0
-                      else:
-                          #insert original pixel in new image
-                          new_img[i, j] = img[i, j]
-              sparsity_img = transforms.ToTensor()(new_img)
-              #an_input = an_input.exapnd(1, an_input.shape[0], an_input.shape[1], an_input.shape[2])
-              #gs_input = gs_input.exapnd(1, an_input.shape[0], an_input.shape[1], an_input.shape[2])
-              print('inputs shape: ', an_input.shape)
-              print('gs inputs shape: ', gs_input.shape)
+              #            white_count += 1
+              #            #leave new_image[i, j] = 0
+              #        else:
+              #            #insert original pixel in new image
+              #            new_img[i, j] = img[i, j]
+              #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
+              #white_ratio = white_count/(img.shape[0]*img.shape[1])
+              #if(white_ratio == 1.0):
+              #    print('ERROR: white ratio = ', white_ratio)
+              #    orig_img = Image.fromarray(img)
+              #    trans_img = Image.fromarray(new_img)
+              #    orig_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_orig_white.png'.format(cfg.exp_id,
+              #                                           batch_idx, a_target.item()))
+              #    trans_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_trans.png'.format(cfg.exp_id,
+              #                                           batch_idx, a_target.item()))
+              #    orig_img.save(orig_img_name)
+              #    trans_img.save(trans_img_name)
+                  #print('img saved: ', orig_img_name)
+
+              #white_ratioes.append(white_ratio)
+
+              #gs_input = transforms.Compose([transforms.ToPILImage()
+              #                      ,transforms.Grayscale(num_output_channels=3)
+              #                      ,transforms.ToTensor()
+              #                      ])(an_input)
+
+              an_input = torch.unsqueeze(an_input, dim=0)
+              #gs_input = torch.unsqueeze(gs_input, dim=0)
+              #sparsity_img = transforms.ToTensor()(new_img)
+              #sp_input = torch.unsqueeze(sparsity_img, dim=0)
+              #print('inputs shape: ', an_input.shape)
+              #print('gs inputs shape: ', gs_input.shape)
               
               start_rgb = time.time()
               outputs = model(an_input)
-              print('rgb outputs shape: ', outputs.shape)
-              _, predicted = torch.argmax(outputs.data)
+              #print('rgb outputs shape: ', outputs.shape)
+              #print('rgb output data: ', outputs.data)
+              #pred = torcn.sigmoid(outputs)
+              #print('pred shape: ', pred.shape, ' pred: ', pred)
+              _, predicted = torch.max(outputs.data, 1)
               rgb_time_list.append(time.time() - start_rgb)
 
+              #gs_outputs = model(gs_input.cuda())
+              #_, gs_predicted = torch.max(gs_outputs.data, 1)
               
-              gs_outputs = model(gs_input.cuda())
-              _, gs_predicted = torch.argmax(gs_outputs.data)
-              
-              start_sp = time.time()
-              sparsity_output = model(new_img.cuda())
-              _, sparsity_predicted = torch.argmax(sparsity_output)
-              sp_time_list.append(time.time() - start_sp)
-
-              print('RGB pred={}, GS pred={}, SP pred={} GS output={}, actual={}'.format(predicted.item(), 
-                                                gs_predicted.item(), sparsity_predicted, 
-                                                gs_outputs.data, a_target.item()))
+              #start_sp = time.time()
+              #sparsity_output = model(sp_input.cuda())
+              #_, sparsity_predicted = torch.max(sparsity_output, 1)
+              #sp_time_list.append(time.time() - start_sp)
+              if(predicted.item() != a_target.item() and error_analysis_count > 0):
+                  print('get error images, original label={}, predicted label={}'.format(a_target.item(),
+                      predicted.item()))
+                  #save two images: original and sparsity, each with its prediction
+                  error_analysis_count -= 1
+                  fig, (ax1, ax2) = plt.subplots(1, 2)
+                  fig.suptitle('Original Label={}      Predicted={}'.format(a_target.item(), 
+                      predicted.item()))
+                  ax1.imshow(img)
+                  #ax1.title('original')
+              #    ax2.imshow(new_img)
+                  #ax2.title('sparsity')
+                  ax1.axis('off')
+                  ax2.axis('off')
+                  plt.show()
+                  fig_path = '{}/exp_{}_orig_sparsity_error_{}.png'.format(out_path, cfg.exp_id, 
+                          error_analysis_count)
+                  plt.savefig(fig_path, dpi=200)
+                  plt.close()
+                  print('fig saved: ', fig_path)
+                  
+              if(batch_idx % 5000 == 0):
+                  print('y pred={}, y true={}'.format(predicted.item(), a_target.item()))
+                  #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
+                  #print('white ratio: ', white_ratio)
               
               rgb_y_pred.append(predicted.item())
-              gs_y_pred.append(gs_predicted.item())
-              sp_y_pred.append(sparsity_predicted.item())
+              #gs_y_pred.append(gs_predicted.item())
+              #sp_y_pred.append(sparsity_predicted.item())
               y_true.append(a_target.item())
               #correct += predicted.eq(a_target.data).cpu().sum().item()
               #gs_correct += gs_predicted.eq(a_target.data).cpu().sum().item()
               #print('RGB correct = {}, GS correct = {}'.format(correct, gs_correct))
-          assert(len(rgb_y_pred) == len(gs_y_pred) == len(y_true))
+          assert(len(rgb_y_pred) == len(y_true))
           if(batch_idx == 0):
-              print('y lengths: ', len(rgb_y_pred), len(gs_y_pred), len(y_true))
-      #acc = 100. * correct / len(test_data)
-      #gs_acc = 100. * gs_correct / len(test_data)
-      #print('%s------------------- Precision@1: %.2f%% \n' % (datetime.now(), acc))
-      #print('%s------------------- Grayscale Precision@1: %.2f%% \n' % (datetime.now(), gs_acc))
-      #summary_writer.add_scalar('Precision@1', acc, global_step=epoch)
+              print('y lengths: ', len(rgb_y_pred), len(y_true))
       rgb_total_time = np.sum(rgb_time_list)
-      print('total time for rgb testing: ', rgb_total_time)
-      sp_total_time = np.sum(sp_time_list)
-      print('total time for sparsity testing:', sp_total_time)
-
+      print('Average time for testing per image: ', np.mean(rgb_time_list))
+      #sp_total_time = np.sum(sp_time_list)
+      #print('Average time for sp testing per image: ', np.mean(sp_time_list))
+      #print('total time for sparsity testing:', sp_total_time)
+      #print('Average of white ratioes: ', np.mean(white_ratioes))
+      #print('Max of white ratioes: ', np.amax(white_ratioes))
+      #print('Min of white ratioes: ', np.amin(white_ratioes))
       rgb_y_pred = np.array(rgb_y_pred)
-      gs_y_pred = np.array(gs_y_pred)
-      sp_y_pred = np.array(sp_y_pred)
+      #gs_y_pred = np.array(gs_y_pred)
+      #sp_y_pred = np.array(sp_y_pred)
       y_true = np.array(y_true)
-      return rgb_y_pred, gs_y_pred, sp_y_pred, y_true, rgb_total_time, sp_total_time
+      return rgb_y_pred, y_true, rgb_total_time
 
   '''
   def test():
@@ -451,11 +542,11 @@ def main():
   #    patience = cfg.max_epochs
   #diff_times = 0
   for epoch in range(cfg.max_epochs):
-    print('\nEpoch: %d =============' % epoch)
+    print('=========================================================')
     train_loss, train_epoch_time = train(epoch)
     valid_loss, valid_epoch_time = valid(epoch)
-    print('train loss = {}, train epoch time = {}, valid loss = {}, valid epoch time = {}'.format(
-        train_loss, train_epoch_time, valid_loss, valid_epoch_time))
+    #print('train loss = {}, train epoch time = {}\nvalid loss = {}, valid epoch time = {}'.format(
+    #    train_loss, train_epoch_time, valid_loss, valid_epoch_time))
     #difference = abs(train_loss - valid_loss)
     #print('difference b/w train and valid loss = ', difference)
     #differences.append(difference)
@@ -476,12 +567,12 @@ def main():
     valid_losses.append(valid_loss)
     train_times.append(train_epoch_time)
     valid_times.append(valid_epoch_time)
-  print('train valid loss curve figure saved')
+  #print('train valid loss curve figure saved')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
   print('train losses: ', train_losses)
   print('valid losses: ', valid_losses)
-  print('average train loss per epoch: ', np.mean(train_losses))
-  print('average valid loss per epoch: ', np.mean(valid_losses))
+  #print('average train loss per epoch: ', np.mean(train_losses))
+  #print('average valid loss per epoch: ', np.mean(valid_losses))
   print('average train time per epoch: ', np.mean(train_times))
   print('average valid time per epoch: ', np.mean(valid_times))
   plt.figure()
@@ -496,35 +587,36 @@ def main():
   plt.close()
   print('train valid loss curve figure saved in path: ', fig_path)
 
-  rgb_y_pred, gs_y_pred, sp_y_pred, y_true, rgb_test_time, sp_test_time = normal_test()
-  if(rgb_y_pred.shape != gs_y_pred.shape or rgb_y_pred.shape != y_true.shape):
-      print('rgb_y.shape={}, gs_y_pred.shape={}, y_true.shape={}'.format(rgb_y_pred.shape, 
-          gs_y_pred.shape, y_true.shape))
+  rgb_y_pred, y_true, rgb_test_time = normal_test()
+  if(rgb_y_pred.shape != y_true.shape):
+      print('rgb_y.shape={}, y_true.shape={}'.format(gs_y_pred.shape, y_true.shape))
       raise ValueError('ERROR: y shapes differ')
-  print('RGB total testing time: ', rgb_test_time)
-  print('Sparsity total testing time: ', sp_test_time)
+  print(cfg.color_mode, ' total testing time: ', rgb_test_time, ' average= ', rgb_test_time/len(test_data))
+  #print('Sparsity total testing time: ', sp_test_time, ' average= ', sp_test_time/len(test_data))
   #test_accuracy, y_pred, y_true = test()
   from sklearn import metrics
   # 1: RGB testing results
   rgb_test_accuracy = metrics.accuracy_score(y_pred=rgb_y_pred, y_true=y_true)
+  print('Test accuracy: ', rgb_test_accuracy)
   rgb_f1 = metrics.f1_score(y_pred=rgb_y_pred, y_true=y_true)
-  print('RGB F1 score :', rgb_f1)
+  print('F1 score :', rgb_f1)
   cm = metrics.confusion_matrix(y_pred=rgb_y_pred, y_true=y_true)
   #print('rgb confusion matrix')
   #print(cm)
   #print('rgb classification report')
   #print(metrics.classification_report(y_true=y_true, y_pred=rgb_y_pred, digits=3))
   # 2: Grayscale testing results
-  gs_f1 = metrics.f1_score(y_pred=gs_y_pred, y_true=y_true)
-  print('GS F1 score :', gs_f1)
-  cm2 = metrics.confusion_matrix(y_pred=gs_y_pred, y_true=y_true)
+  #gs_f1 = metrics.f1_score(y_pred=gs_y_pred, y_true=y_true)
+  #print('GS F1 score :', gs_f1)
+  #cm2 = metrics.confusion_matrix(y_pred=gs_y_pred, y_true=y_true)
   #print('gs confusion matrix')
   #print(cm2)
   #print('gs classification report')
   #print(metrics.classification_report(y_true=y_true, y_pred=gs_y_pred, digits=3))
   # 3: Sparsity testing results
-  sp_f1 = metrics.f1_score(y_pred=sp_y_pred, y_true=y_true)
-  print('SP F1 score :', sp_f1)
+  #sp_test_accuracy = metrics.accuracy_score(y_pred=sp_y_pred, y_true=y_true)
+  #sp_f1 = metrics.f1_score(y_pred=sp_y_pred, y_true=y_true)
+  #print('SP F1 score :', sp_f1)
   #cm3 = metrics.confusion_matrix(y_pred=sp_y_pred, y_true=y_true)
   #print('sp confusion matrix')
   #print(cm3)
@@ -534,16 +626,29 @@ def main():
   import seaborn as sns
   sns.set(font_scale=1.0) #label size
   ax = sns.heatmap(cm, annot=True, fmt="d",cmap='Greys')
-  title = 'RGB Testing Accuracy=' + str(np.around(rgb_test_accuracy, decimals=2))
+  title = cfg.color_mode + ' Testing Accuracy=' + str(np.around(rgb_test_accuracy, decimals=3))
   plt.title(title)
   plt.xlabel('Predicted Classes')
   plt.ylabel('True Classes')
   plt.show()
   img_name = '{}/exp_{}_cm.png'.format(out_path, cfg.exp_id)
-  plt.savefig(img_name, dpi=600)
+  plt.savefig(img_name, dpi=200)
   print('image saved in ', img_name)
   plt.close()
   summary_writer.close()
+
+  #sns.set(font_scale=1.0) #label size
+  #ax = sns.heatmap(cm3, annot=True, fmt="d",cmap='Greys')
+  #title = 'Sparsity Testing Accuracy=' + str(np.around(sp_test_accuracy, decimals=3))
+  #plt.title(title)
+  #plt.xlabel('Predicted Classes')
+  #plt.ylabel('True Classes')
+  #plt.show()
+  #img_name = '{}/exp_{}_sp_cm.png'.format(out_path, cfg.exp_id)
+  #plt.savefig(img_name, dpi=300)
+  #print('image saved in ', img_name)
+  #plt.close()
+  
 
 
 if __name__ == '__main__':
