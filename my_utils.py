@@ -5,6 +5,8 @@ import h5py
 import argparse
 import numpy as np
 from PIL import Image
+import torchvision
+import torchvision.transforms as transforms
 
 parser = argparse.ArgumentParser(description='Convert PatchCamelyon to grayscale of sparsity')
 parser.add_argument('--color_mode', type=str, default='grayscale')
@@ -31,11 +33,16 @@ for i in range(X.shape[0]):
     print('sample shape: ', sample.shape)
     print('lable shape: ', label.shape, ' label = ', label)
     if(cfg.color_mode == 'grayscale'):
-        new_sample = Image.fromarray(sample)
-        new_sample = new_sample.convert('L')
+        new_sample = transforms.Compose([transforms.ToPILImage()
+                                    ,transforms.Grayscale(num_output_channels=3)
+                                    ,transforms.ToTensor()
+                                    ])(sample)
+        print('new sample shape={}, type={}'.format(new_sample.shape, type(new_sample)))
+        #new_sample = Image.fromarray(sample)
+        #new_sample = new_sample.convert('L')
         #print('new sample image size: ', new_sample.size)
         new_sample = np.array(new_sample)
-        #print('new sample arr shape: ', new_sample.shape)
+        print('new sample arr shape: ', new_sample.shape)
         new_X.append(new_sample)
         new_y.append(label)
 print('new X len: ', len(new_X), ' new y len: ', len(new_y))
