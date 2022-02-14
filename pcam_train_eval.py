@@ -15,6 +15,7 @@ import torch
 import torch.optim as optim
 import torch.utils as utils
 import torch.backends.cudnn as cudnn
+from torchsummary import summary
 
 cudnn.benchmark = True
 import torchvision
@@ -85,27 +86,40 @@ class myDataset(torch.utils.data.Dataset):
         assert mode in ['train', 'valid', 'test']
         if(cfg.color_mode == 'grayscale'):
             base_name = '{}_grayscale_{}.npy'
-            self.X = np.load(os.path.join(path, base_name.format(mode, 'X')))
+            self.X = np.load(os.path.join(path, base_name.format(mode, 'x')))
             self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
             print('loaded data shapes: ', self.X.shape, self.y.shape)
-            exit()
-        base_name = "camelyonpatch_level_2_split_{}_{}.h5"
-        #num_white_images = 0
-        print("# " * 10)
-        print('Loading {} dataset...'.format(mode))
-        # Open the files
-        h5X = h5py.File(os.path.join(path, base_name.format(mode, 'x')), 'r')
-        h5y = h5py.File(os.path.join(path, base_name.format(mode, 'y')), 'r')
-        print('x h5py: ', h5X)
-        # Read into numpy array
-        self.X = np.array(h5X.get('x'))
-        self.y = np.array(h5y.get('y'))
+        elif(cfg.color_mode == 'sparsity'):
+            base_name = '{}_sparsity_{}.npy'
+            self.X = np.load(os.path.join(path, base_name.format(mode, 'x')))
+            self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
+        elif(cfg.color_mode == 'grayscale_sparsity'):
+            base_name = '{}_grayscale_sparsity_{}.npy'
+            self.X = np.load(os.path.join(path, base_name.format(mode, 'x')))
+            self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
+        else:
+            base_name = "camelyonpatch_level_2_split_{}_{}.h5"
+            #num_white_images = 0
+            print("# " * 10)
+            print('Loading {} dataset...'.format(mode))
+            # Open the files
+            x_filename = os.path.join(path, base_name.format(mode, 'x'))
+            print('trying to open file: ', x_filename)
+            h5X = h5py.File(x_filename, 'r')
+            h5y = h5py.File(os.path.join(path, base_name.format(mode, 'y')), 'r')
+            print('x h5py: ', h5X)
+            # Read into numpy array
+            self.X = np.array(h5X.get('x'))
+            self.y = np.array(h5y.get('y'))
+        self.X = self.X.astype('uint8')
         print('X data shape: ', self.X.shape, ' type: ', self.X.dtype)
-        #print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
+        if(self.X.shape[-1] != 3):
+            raise ValueError('ERROR: data shape is not correct. It should be b,h,w,c NOT b,c,h,w')
         self.y = np.squeeze(self.y)
         print('Y data shape: ', self.y.shape, ' type: ', self.y.dtype)
-        self.X, self.y = sklearn.utils.shuffle(self.X, self.y)
-        print('done shuffling dataset')
+        if(mode == 'train'):
+            self.X, self.y = sklearn.utils.shuffle(self.X, self.y)
+            print('done shuffling dataset')
         x_filename = os.path.join(path, base_name.format(mode, 'x'))
         y_filename = os.path.join(path, base_name.format(mode, 'y'))
         #np.save(file=x_filename, arr=self.X)
@@ -124,46 +138,10 @@ class myDataset(torch.utils.data.Dataset):
     def __getitem__(self, item):
         idx = item % self.__len__()
         #_slice = slice(idx*self.batch_size, (idx + 1) * self.batch_size)
-        image = self.X[idx]
+        #image = self.X[idx]
         #print('images shape = ', images.shape, ' dtype: ', images.dtype)
-        if(cfg.color_mode == 'grayscale'):
-            #print('convert to grayscale image')
-            image = transforms.Compose([transforms.ToPILImage()
-                        ,transforms.Grayscale(num_output_channels=3)
-                        ,transforms.ToTensor()
-                        ])(image)
-        elif(cfg.color_mode == 'sparsity'):
-            #print('convert image to sparsity')
-            img = transforms.ToPILImage()(image)
-            img = np.array(img)
-            #print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
-            new_img = np.zeros(shape=(img.shape), dtype='uint8')
-            white_count = 0
-            #loop over each pixel
-            for i in range(img.shape[0]):
-                for j in range(img.shape[1]):
-                    #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-                    if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                        #print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
-                        #print('maybe white pixel')
-                        white_count += 1
-                    else:
-                        #insert original pixel in new image
-                        new_img[i, j] = img[i, j]
-            #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
-            white_ratio = white_count/(img.shape[0]*img.shape[1])
-            #print('white ratio: ', white_ratio)
-            image = transforms.ToTensor()(new_img)
-            #sp_input = torch.unsqueeze(sparsity_img, dim=0)
-            #print('image shape: ', image.shape)
-            #if(white_ratio == 1.0):
-            #    num_white_images += 1
-            #    #print('ERROR: white ratio = ', white_ratio)
-            #    #TODO: SKIP IMAGE
-            #    #return None
-        else:
-            image = self.transform(self.X[idx])
 
+        image = self.transform(self.X[idx])
         label = torch.tensor(self.y[idx].astype(np.int64))
         #print('images shape = ', images.shape, ' dtype: ', images.dtype)
         #images = torch.transpose(images, 0, 2).type(torch.FloatTensor)# .astype(np.float32)
@@ -189,7 +167,7 @@ def main():
   train_data = myDataset(data_path, mode='train')
   test_data = myDataset(data_path, mode='test')
   print('train_data len: ', len(train_data))
-  print('train_data[0] images shape: ', train_data[0]['images'].shape)
+  #print('train_data[0] images shape: ', train_data[0]['images'].shape)
   train_data_loader = utils.data.DataLoader(train_data, batch_size=cfg.train_batch_size, shuffle=True)
   test_data_loader = utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
   train_data = train_data_loader
@@ -212,6 +190,8 @@ def main():
   elif(cfg.model == 'resnet56'):
       model = resnet56(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
   print(model)
+  print('===== printing model summary ====')
+  summary(model, (3, 96, 96))
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   #optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd) 
   #Adam defaults: betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
@@ -388,7 +368,7 @@ def main():
               #_, sparsity_predicted = torch.max(sparsity_output, 1)
               #sp_time_list.append(time.time() - start_sp)
               if(predicted.item() != a_target.item() and error_analysis_count > 0):
-                  print('get error images, original label={}, predicted label={}'.format(a_target.item(),
+                  print('getting error images, original label={}, predicted label={}'.format(a_target.item(),
                       predicted.item()))
                   #save two images: original and sparsity, each with its prediction
                   error_analysis_count -= 1
@@ -402,14 +382,16 @@ def main():
                   ax1.axis('off')
                   ax2.axis('off')
                   plt.show()
-                  fig_path = '{}/exp_{}_orig_sparsity_error_{}.png'.format(out_path, cfg.exp_id, 
+                  fig_path = '{}/exp_{}_orig_{}_error_{}.png'.format(out_path, 
+                          cfg.color_mode,
+                          cfg.exp_id, 
                           error_analysis_count)
                   plt.savefig(fig_path, dpi=200)
                   plt.close()
-                  print('fig saved: ', fig_path)
+                  #print('fig saved: ', fig_path)
                   
-              if(batch_idx % 5000 == 0):
-                  print('y pred={}, y true={}'.format(predicted.item(), a_target.item()))
+              #if(batch_idx % 5000 == 0):
+              #    print('y pred={}, y true={}'.format(predicted.item(), a_target.item()))
                   #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
                   #print('white ratio: ', white_ratio)
               
@@ -569,8 +551,8 @@ def main():
     valid_times.append(valid_epoch_time)
   #print('train valid loss curve figure saved')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
-  print('train losses: ', train_losses)
-  print('valid losses: ', valid_losses)
+  #print('train losses: ', train_losses)
+  #print('valid losses: ', valid_losses)
   #print('average train loss per epoch: ', np.mean(train_losses))
   #print('average valid loss per epoch: ', np.mean(valid_losses))
   print('average train time per epoch: ', np.mean(train_times))
