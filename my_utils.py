@@ -58,6 +58,8 @@ def get_sparsity(sample, s_threshold):
             else:
                 new_img[j, k] = img[j, k]
     white_ratio = white_count/(img.shape[0]*img.shape[1])
+    #apply rotation randomly
+    new_img = np.rot90(new_img)
     return new_img, white_ratio
 
 if(__name__ == "__main__"):
@@ -89,6 +91,7 @@ if(__name__ == "__main__"):
     print('sparsity threshold: ', s_threshold)
 
     white_ratio_list = []
+    full_white_count = 0
     for i in range(X.shape[0]):
         sample = X[i]
         label = y[i]
@@ -121,12 +124,20 @@ if(__name__ == "__main__"):
             new_X.append(img)
             new_y.append(label)
             white_ratio_list.append(white_ratio)
-            if(white_ratio == 1.0):
-                print('full white image')
-            else:
-                print('white ratio =', white_ratio)
+            if(white_ratio >= 0.95):
+                print('full white image, white_ratio=', white_ratio)
+                full_white_count += 1
+                if(label == 1):
+                    print('ERROR: label should be 0, but found = ', label)
+                    img = Image.fromarray(img)
+                    orig_img = Image.fromarray(sample)
+                    orig_img.save(os.path.join(path, '{}_{}_rgb_white{}_label_{}.png'.format(
+                        cfg.phase, cfg.color_mode, round(white_ratio,3), label)))
+                    img.save(os.path.join(path, '{}_{}_sp_white{}_label_{}.png'.format(
+                        cfg.phase, cfg.color_mode, round(white_ratio,3), label)))
     
     if('sparsity' in cfg.color_mode):
+        print('Number of full (> 95%) white images = ', full_white_count)
         print('length of white ratios: ', len(white_ratio_list))
         print('white ratio average of this dataset: ', np.mean(white_ratio_list))
 
