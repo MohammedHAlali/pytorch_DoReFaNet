@@ -272,8 +272,8 @@ def main():
             valid_batch_time_list.append(valid_batch_time)
             valid_loss_list.append(loss.item())
             if(batch_idx % 10000 == 0):
-                print('iteration={}, output_shape={} loss={}, lenght of valid batch time list={}'.format(
-                    batch_idx, outputs.shape, loss.item(), len(valid_batch_time_list)))
+                print('iteration={}, output_shape={} loss={}'.format(
+                    batch_idx, outputs.shape, loss.item()))
         valid_loss_per_epoch = np.mean(valid_loss_list)
         valid_time_per_epoch = np.sum(valid_batch_time_list)
         #print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
@@ -308,54 +308,11 @@ def main():
               img = transforms.ToPILImage()(an_input)
               #img = an_input.cpu().numpy()
               img = np.array(img)
-              #print('img type: ', type(img), ' shape: ', img.shape, ' max: ', np.amax(img))
-              #new_img = np.zeros(shape=(img.shape), dtype='uint8')
-              #white_count = 0
-              #loop over each pixel
-              #for i in range(img.shape[0]):
-              #    for j in range(img.shape[1]):
-                      #print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-              #        if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                          #print('img[{},{}], white pixel={}'.format(i, j, img[i,j]))
-                          #print('maybe white pixel')
-              #            white_count += 1
-              #            #leave new_image[i, j] = 0
-              #        else:
-              #            #insert original pixel in new image
-              #            new_img[i, j] = img[i, j]
-              #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
-              #white_ratio = white_count/(img.shape[0]*img.shape[1])
-              #if(white_ratio == 1.0):
-              #    print('ERROR: white ratio = ', white_ratio)
-              #    orig_img = Image.fromarray(img)
-              #    trans_img = Image.fromarray(new_img)
-              #    orig_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_orig_white.png'.format(cfg.exp_id,
-              #                                           batch_idx, a_target.item()))
-              #    trans_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_trans.png'.format(cfg.exp_id,
-              #                                           batch_idx, a_target.item()))
-              #    orig_img.save(orig_img_name)
-              #    trans_img.save(trans_img_name)
-                  #print('img saved: ', orig_img_name)
-
-              #white_ratioes.append(white_ratio)
-
-              #gs_input = transforms.Compose([transforms.ToPILImage()
-              #                      ,transforms.Grayscale(num_output_channels=3)
-              #                      ,transforms.ToTensor()
-              #                      ])(an_input)
 
               an_input = torch.unsqueeze(an_input, dim=0)
-              #gs_input = torch.unsqueeze(gs_input, dim=0)
-              #sparsity_img = transforms.ToTensor()(new_img)
-              #sp_input = torch.unsqueeze(sparsity_img, dim=0)
-              #print('inputs shape: ', an_input.shape)
-              #print('gs inputs shape: ', gs_input.shape)
               
               start_rgb = time.time()
               outputs = model(an_input)
-              #print('rgb outputs shape: ', outputs.shape)
-              #print('rgb output data: ', outputs.data)
-              #pred = torcn.sigmoid(outputs)
               #print('pred shape: ', pred.shape, ' pred: ', pred)
               _, predicted = torch.max(outputs.data, 1)
               rgb_time_list.append(time.time() - start_rgb)
@@ -419,99 +376,6 @@ def main():
       y_true = np.array(y_true)
       return rgb_y_pred, y_true, rgb_total_time
 
-  '''
-  def test():
-    print(' ------------------------ modified test -------------------------')
-    # pass
-    model.eval()
-    correct = 0
-    y_pred = []
-    y_true = []
-    max_list = []
-    min_list = []
-    with torch.no_grad():
-        print('looping on test data for {} iterations'.format(len(test_data)))
-        for batch_idx, sample in enumerate(test_data):
-            inputs = sample['images']
-            targets = sample['labels']
-            if(batch_idx == 0):
-                print('iteration={}, inputs type={}, inputs shape={}, targets type={}, targets shape={}'.format(batch_idx, inputs.dtype, inputs.shape, targets.dtype, targets.shape))
-            #white_count = 0 #count of white pixel in an image
-            inputs, targets = inputs.cuda(), targets.cuda()
-            pil_img = transforms.Compose([transforms.ToPILImage()
-                     #, transforms.Grayscale(num_output_channels=3)
-                     ])(inputs[0])
-            #print('grayscale inputs type: ', type(grayscale_input))
-            img = np.array(pil_img)
-            #images = np.swapaxes(images, axis1=0, axis2=2)
-            #images = np.expand_dims(images, axis=0)
-            #images = np.expand_dims(images, axis=0).astype('float32')
-            #print(' dtype: ', images.dtype)
-            #print(' shape: ', images.shape)
-            #images = torch.from_numpy(images).cuda()
-            #image0 = image0.convert('RGB')
-            #image0 = image0.resize(size=(image0.size[0]-6, image0.size[1]-6))
-            #img = np.array(image0)
-            new_img = np.zeros(shape=(img.shape), dtype='uint8')
-            white_count = 0
-            #loop over each pixel
-            for i in range(img.shape[0]):
-                for j in range(img.shape[1]):
-                    print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-                    if(img[i,j, 0] >= 200 and img[i,j, 1] >= 200 and img[i,j, 2] >= 200):
-                        print('img[{},{}], pixel={}'.format(i, j, img[i,j]))
-                        print('maybe white pixel')
-                        white_count += 1
-                        #leave new_image[i, j] = 0
-                    else:
-                        new_img[i, j] = img[i, j]
-            outputs = model(images)
-            print('output shape: ', outputs.shape)
-            _, predicted = torch.max(outputs.data, 1)
-            print('predicted (y_pred[i]): ', predicted.item())
-            y_pred.append(predicted.item())
-            y_true.append(targets.item())
-            print('y_pred: ', y_pred)
-            correct += predicted.eq(targets.data).cpu().sum().item()
-            if(batch_idx % 4000 == 0):
-                print('============ iteration # ', batch_idx, ' ===================')
-                print('test inputs shape:', inputs.shape, ' targets shape: ', targets.shape)
-                #print('image0 size: ', image0.size, ' np image shape: ', img.shape, 
-                #        ' new image shape: ', new_img.shape)
-                print('output shape: ', outputs.shape, ' type: ', type(outputs))
-                print('predicted (y_pred[i]): ', predicted.item())
-                print('targets (y_true[i]): ', targets.item())
-                #print('white pixels count: {}. total pixel count = {}x{}={}'.format(white_count, img.shape[0],img.shape[1], img.shape[0]*img.shape[1]))
-                #orig_img = transforms.ToPILImage()(inputs[0]) #convert to PIL
-                orig_img = pil_img
-                print('orig img type: ', type(orig_img))
-                #orig_img = orig_img.numpy() #convert to numpy
-                trans_img = Image.fromarray(new_img)
-                print('img max: ', np.amax(orig_img), ' new img max: ', np.amax(trans_img))
-                print('img min: ', np.min(orig_img), ' new img min: ', np.min(trans_img))
-                #print('type of orig img: ', type(orig_img))
-                #print('type trans img: ', type(trans_img))
-                orig_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_orig.png'.format(cfg.exp_id, 
-                    batch_idx, targets.item()))
-                trans_img_name = os.path.join(out_path, 'exp{}_img_{}_class{}_trans.png'.format(cfg.exp_id, 
-                    batch_idx, targets.item()))
-                orig_img.save(orig_img_name)
-                trans_img.save(trans_img_name)
-                print('img saved: ', orig_img_name)
-                print('img saved: ', trans_img_name)
-
-        acc = 100. * correct / len(test_data)
-        print('%s------------------------------------------------------ \n'
-          'Test Precision@1: %.2f%% \n' % (datetime.now(), acc))
-        summary_writer.add_scalar('Precision@1', acc)
-    #print('y pred list type: ', type(y_pred))
-    #print('y true list type: ', type(y_true))
-    y_pred = np.array(y_pred)
-    y_true = np.array(y_true)
-    #print('y pred shape: ', y_pred.shape)
-    #print('y true shape: ', y_true.shape)
-    return acc, y_pred, y_true
-    '''
 
   train_losses = []
   valid_losses = []
@@ -523,12 +387,22 @@ def main():
   #else:
   #    patience = cfg.max_epochs
   #diff_times = 0
+  best_valid_loss = 100
+  best_epoch = 0
   for epoch in range(cfg.max_epochs):
     print('=========================================================')
     train_loss, train_epoch_time = train(epoch)
     valid_loss, valid_epoch_time = valid(epoch)
+    torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint_epoch{}.pt'.format(epoch))
     #print('train loss = {}, train epoch time = {}\nvalid loss = {}, valid epoch time = {}'.format(
     #    train_loss, train_epoch_time, valid_loss, valid_epoch_time))
+    if(valid_loss < best_valid_loss):
+        print('best valid loss = ', valid_loss, ' epoch: ', epoch)
+        best_valid_loss = valid_loss
+        best_epoch = epoch
+    if(train_loss < 0 or valid_loss < 0):
+        raise ValueError('ERROR: found negative loss')
+    
     #difference = abs(train_loss - valid_loss)
     #print('difference b/w train and valid loss = ', difference)
     #differences.append(difference)
@@ -551,24 +425,27 @@ def main():
     valid_times.append(valid_epoch_time)
   #print('train valid loss curve figure saved')
   torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
-  #print('train losses: ', train_losses)
-  #print('valid losses: ', valid_losses)
+  print('train losses: ', train_losses)
+  print('valid losses: ', valid_losses)
   #print('average train loss per epoch: ', np.mean(train_losses))
   #print('average valid loss per epoch: ', np.mean(valid_losses))
   print('average train time per epoch: ', np.mean(train_times))
   print('average valid time per epoch: ', np.mean(valid_times))
   plt.figure()
-  plt.plot(np.log(train_losses), 'g--', label='training loss')
-  plt.plot(np.log(valid_losses), '-', label='validation loss')
+  #update Feb23-22, removed np.log() from loss
+  plt.plot(train_losses, 'g--', label='training loss')
+  plt.plot(valid_losses, '-', label='validation loss')
   plt.title('Training and Validation Loss, exp{}'.format(cfg.exp_id))
   plt.ylabel('Loss')
   plt.xlabel('Epoch')
-  plt.legend(loc='upper right')
+  plt.legend(loc='upper left')
   fig_path = '{}/exp_{}_train_valid_loss.png'.format(out_path, cfg.exp_id)
   plt.savefig(fig_path, dpi=300)
   plt.close()
   print('train valid loss curve figure saved in path: ', fig_path)
 
+  print('TODO: load best model, from epoch=', best_epoch, ' best valid loss =', best_valid_loss, ' epoch index=', valid_losses.find(best_valid_loss))
+  exit()
   rgb_y_pred, y_true, rgb_test_time = normal_test()
   if(rgb_y_pred.shape != y_true.shape):
       print('rgb_y.shape={}, y_true.shape={}'.format(gs_y_pred.shape, y_true.shape))
