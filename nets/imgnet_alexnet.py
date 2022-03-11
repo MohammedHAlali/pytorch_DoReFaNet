@@ -10,7 +10,7 @@ class AlexNet_Q(nn.Module):
     super(AlexNet_Q, self).__init__()
     Conv2d = conv2d_Q_fn(w_bit=wbit)
     Linear = linear_Q_fn(w_bit=wbit)
-
+    self.features_size = 256*2*2
     self.features = nn.Sequential(
       nn.Conv2d(3, 96, kernel_size=11, stride=4, padding=2),
       nn.BatchNorm2d(96),
@@ -36,16 +36,18 @@ class AlexNet_Q(nn.Module):
       nn.ReLU(inplace=True),
       activation_quantize_fn(a_bit=abit),
     )
+    #print('features model', self.features)
     self.classifier = nn.Sequential(
-      Linear(256 * 6 * 6, 4096),
+      Linear(self.features_size, 1024), #TODO: decrease output shape
       nn.ReLU(inplace=True),
       activation_quantize_fn(a_bit=abit),
 
-      Linear(4096, 4096),
+      Linear(1024, 512),
       nn.ReLU(inplace=True),
       activation_quantize_fn(a_bit=abit),
-      nn.Linear(4096, num_classes),
+      nn.Linear(512, num_classes),
     )
+    #print('classifier model: ', self.classifier)
 
     for m in self.modules():
       if isinstance(m, Conv2d) or isinstance(m, Linear):
@@ -53,10 +55,14 @@ class AlexNet_Q(nn.Module):
 
   def forward(self, x):
     x = self.features(x)
-    x = x.view(x.size(0), 256 * 6 * 6)
+    #print('actual features size: ', x.shape)
+    x = x.view(x.size(0), self.features_size)
     x = self.classifier(x)
     return x
 
+
+def alexnet(wbits, abits, num_classes):
+      return AlexNet_Q(wbits, abits, num_classes)
 
 if __name__ == '__main__':
   from torch.autograd import Variable
