@@ -24,6 +24,7 @@ import torchvision.transforms as transforms
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 from nets.cifar_resnet import *
+from nets.imgnet_alexnet import alexnet
 
 from utils.preprocessing import *
 
@@ -97,7 +98,12 @@ class myDataset(torch.utils.data.Dataset):
             base_name = '{}_grayscale_sparsity_{}.npy'
             self.X = np.load(os.path.join(path, base_name.format(mode, 'x')))
             self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
-        else:
+        elif(cfg.color_mode == 'rgb'):
+            base_name = '{}_rgb_{}.npy'
+            self.X = np.load(os.path.join(path, base_name.format(mode, 'x')))
+            self.y = np.load(os.path.join(path, base_name.format(mode, 'y')))
+            print('loading data from {}, shape={}'.format(base_name, self.X.shape))
+        else: #not needed, but keep it
             base_name = "camelyonpatch_level_2_split_{}_{}.h5"
             #num_white_images = 0
             print("# " * 10)
@@ -189,9 +195,11 @@ def main():
       model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
   elif(cfg.model == 'resnet56'):
       model = resnet56(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
+  elif(cfg.model == 'alexnet'):
+      model = alexnet(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   print(model)
   print('===== printing model summary ====')
-  summary(model, (3, 96, 96))
+  #summary(model, (3, 96, 96))
   optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   #optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd) 
   #Adam defaults: betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
@@ -279,7 +287,7 @@ def main():
         #print('epoch: %d valid_loss= %.5f' % (epoch, valid_epoch_loss))
       return valid_loss_per_epoch, valid_time_per_epoch
 
-  def normal_test():
+  def normal_test(model):
       print('======================= testing ==========================')
       # pass
       model.eval()
@@ -292,6 +300,7 @@ def main():
       rgb_time_list = []
       sp_time_list = []
       white_ratioes = []
+      batch_idx_list = []
       error_analysis_count = 20
       print('loop on test data for length = ', len(test_data))
       for batch_idx, sample in enumerate(test_data):
@@ -327,10 +336,12 @@ def main():
               if(predicted.item() != a_target.item() and error_analysis_count > 0):
                   print('getting error images, original label={}, predicted label={}'.format(a_target.item(),
                       predicted.item()))
+                  print('output data: ', outputs.data)
+                  batch_idx_list.append(batch_idx)
                   #save two images: original and sparsity, each with its prediction
                   error_analysis_count -= 1
                   fig, (ax1, ax2) = plt.subplots(1, 2)
-                  fig.suptitle('Original Label={}      Predicted={}'.format(a_target.item(), 
+                  fig.suptitle('sample No{}, Original Label={}, Predicted={}'.format(batch_idx, a_target.item(), 
                       predicted.item()))
                   ax1.imshow(img)
                   #ax1.title('original')
@@ -363,6 +374,7 @@ def main():
           if(batch_idx == 0):
               print('y lengths: ', len(rgb_y_pred), len(y_true))
       rgb_total_time = np.sum(rgb_time_list)
+      print('list of misclassified samples idx: ', batch_idx_list)
       print('Average time for testing per image: ', np.mean(rgb_time_list))
       #sp_total_time = np.sum(sp_time_list)
       #print('Average time for sp testing per image: ', np.mean(sp_time_list))
@@ -393,7 +405,7 @@ def main():
     print('=========================================================')
     train_loss, train_epoch_time = train(epoch)
     valid_loss, valid_epoch_time = valid(epoch)
-    torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint_epoch{}.pt'.format(epoch))
+    torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint_epoch{}.pt'.format(epoch)))
     #print('train loss = {}, train epoch time = {}\nvalid loss = {}, valid epoch time = {}'.format(
     #    train_loss, train_epoch_time, valid_loss, valid_epoch_time))
     if(valid_loss < best_valid_loss):
@@ -444,9 +456,11 @@ def main():
   plt.close()
   print('train valid loss curve figure saved in path: ', fig_path)
 
-  print('TODO: load best model, from epoch=', best_epoch, ' best valid loss =', best_valid_loss, ' epoch index=', valid_losses.find(best_valid_loss))
-  exit()
-  rgb_y_pred, y_true, rgb_test_time = normal_test()
+  print('load best model, from epoch=', best_epoch, ' best valid loss =', best_valid_loss, ' epoch index=', valid_losses.index(best_valid_loss))
+  best_epoch_file = os.path.join(cfg.ckpt_dir, 'checkpoint_epoch{}.pt'.format(best_epoch))
+  assert(os.path.exists(best_epoch_file))
+  model.load_state_dict(torch.load(best_epoch_file))
+  rgb_y_pred, y_true, rgb_test_time = normal_test(model)
   if(rgb_y_pred.shape != y_true.shape):
       print('rgb_y.shape={}, y_true.shape={}'.format(gs_y_pred.shape, y_true.shape))
       raise ValueError('ERROR: y shapes differ')
