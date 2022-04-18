@@ -24,7 +24,7 @@ import torchvision.transforms as transforms
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 from nets.cifar_resnet import *
-from nets.imgnet_alexnet import alexnet
+#from nets.imgnet_alexnet import alexnet
 
 from utils.preprocessing import *
 
@@ -166,7 +166,7 @@ class myDataset(torch.utils.data.Dataset):
 
 
 def main():
-  data_path = '../data/camelyon/'
+  data_path = '/work/deogun/alali/data/camelyon/'
   valid_data = myDataset(data_path, mode='valid')
   valid_data_loader = utils.data.DataLoader(valid_data, batch_size=cfg.eval_batch_size, shuffle=False)
   print('valid dataset loader: ', valid_data_loader)
@@ -192,9 +192,9 @@ def main():
   print('==> Building ResNet..')
   print('w-bits=', cfg.Wbits, ' a-bits=', cfg.Abits)
   if(cfg.model == 'resnet20'):
-      model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
+      model = resnet20(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   elif(cfg.model == 'resnet56'):
-      model = resnet56(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2, dropout=cfg.Dropout).cuda()
+      model = resnet56(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   elif(cfg.model == 'alexnet'):
       model = alexnet(wbits=cfg.Wbits, abits=cfg.Abits, num_classes=2).cuda()
   print(model)
@@ -474,6 +474,10 @@ def main():
   rgb_f1 = metrics.f1_score(y_pred=rgb_y_pred, y_true=y_true)
   print('F1 score :', rgb_f1)
   cm = metrics.confusion_matrix(y_pred=rgb_y_pred, y_true=y_true)
+  tn, fp, fn, tp = cm.ravel()
+  print('tn={}, fp={}, fn={}, tp={}'.format(tn, fp, fn, tp))
+  print('true positive rate: ', tp/(tp+fn))
+  print('true negative rate: ', tn/(tn+fp))
   #print('rgb confusion matrix')
   #print(cm)
   #print('rgb classification report')

@@ -15,7 +15,7 @@ class PreActBlock_conv_Q(nn.Module):
     self.abit = abit
     # remove quantizatio when bitwidth is 32
     if(self.wbit == 32 or self.abit == 32):
-        print('removing quantization functions when wbits or abits is 32')
+        #print('removing quantization functions when wbits or abits is 32')
         Conv2d = nn.Conv2d
         self.act_q = None
     else:
@@ -56,7 +56,7 @@ class PreActBlock_conv_Q(nn.Module):
 
 
 class PreActResNet(nn.Module):
-  def __init__(self, block, num_units, wbit, abit, num_classes, dropout):
+  def __init__(self, block, num_units, wbit, abit, num_classes):
     super(PreActResNet, self).__init__()
     #self.dropout = dropout
     #first layer is not quantized, use bias = True
@@ -90,12 +90,12 @@ class PreActResNet(nn.Module):
     return out
 
 
-def resnet20(wbits, abits, num_classes, dropout):
-  return PreActResNet(PreActBlock_conv_Q, [3, 3, 3], wbits, abits, num_classes, dropout)
+def resnet20(wbits, abits, num_classes):
+  return PreActResNet(PreActBlock_conv_Q, [3, 3, 3], wbits, abits, num_classes)
 
 
-def resnet56(wbits, abits, num_classes, dropout):
-  return PreActResNet(PreActBlock_conv_Q, [9, 9, 9], wbits, abits, num_classes, dropout)
+def resnet56(wbits, abits, num_classes):
+  return PreActResNet(PreActBlock_conv_Q, [9, 9, 9], wbits, abits, num_classes)
 
 
 if __name__ == '__main__':
