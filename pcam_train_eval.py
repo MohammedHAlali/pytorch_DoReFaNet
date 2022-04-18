@@ -325,14 +325,9 @@ def main():
               #print('pred shape: ', pred.shape, ' pred: ', pred)
               _, predicted = torch.max(outputs.data, 1)
               rgb_time_list.append(time.time() - start_rgb)
+              rgb_y_pred.append(predicted.item())
+              y_true.append(a_target.item())
 
-              #gs_outputs = model(gs_input.cuda())
-              #_, gs_predicted = torch.max(gs_outputs.data, 1)
-              
-              #start_sp = time.time()
-              #sparsity_output = model(sp_input.cuda())
-              #_, sparsity_predicted = torch.max(sparsity_output, 1)
-              #sp_time_list.append(time.time() - start_sp)
               if(predicted.item() != a_target.item() and error_analysis_count > 0):
                   print('getting error images, original label={}, predicted label={}'.format(a_target.item(),
                       predicted.item()))
@@ -357,19 +352,6 @@ def main():
                   plt.savefig(fig_path, dpi=200)
                   plt.close()
                   #print('fig saved: ', fig_path)
-                  
-              #if(batch_idx % 5000 == 0):
-              #    print('y pred={}, y true={}'.format(predicted.item(), a_target.item()))
-                  #print('white count: ', white_count, ' total pixels: ', img.shape[0]*img.shape[1])
-                  #print('white ratio: ', white_ratio)
-              
-              rgb_y_pred.append(predicted.item())
-              #gs_y_pred.append(gs_predicted.item())
-              #sp_y_pred.append(sparsity_predicted.item())
-              y_true.append(a_target.item())
-              #correct += predicted.eq(a_target.data).cpu().sum().item()
-              #gs_correct += gs_predicted.eq(a_target.data).cpu().sum().item()
-              #print('RGB correct = {}, GS correct = {}'.format(correct, gs_correct))
           assert(len(rgb_y_pred) == len(y_true))
           if(batch_idx == 0):
               print('y lengths: ', len(rgb_y_pred), len(y_true))
